@@ -28,11 +28,11 @@ React Tracker page ──JWT──> orchestrator (backend, :8000) ──Bearer R
 | verifier down (fault injection) | `f7395abd-aec3-4655-b338-ae55e43a9e73` | [traces/a2-fault-verifier-down/](traces/a2-fault-verifier-down/) |
 | researcher down (fault injection) | `d4f7aa79-24d1-47b8-bd1c-638123c6bb41` | [traces/a2-fault-researcher-down/](traces/a2-fault-researcher-down/) |
 
-> **Not yet measured: the Render verifier.** These runs used a *local* verifier on port 8002. The
-> verifier is ready for Render (`render.yaml`, README "Deploy the verifier on Render"), but deploying
-> needs the student's Render account and typing the API key into Render's dashboard, which I was not
-> allowed to do. Every Render-specific number below is marked **TODO (Render)**; nothing there is
-> estimated or invented. After deploying, re-run run 1 with `VERIFIER_URL` set and fill them in.
+> **All three services run locally; the verifier is not deployed on Render.** This was a deliberate
+> decision (DECISIONS.md C8) and departs from the PDF, which asks for the verifier on Render's free
+> tier. Consequently **no Render cold start was measured**; where the questions ask about Render, the
+> answers below say what the design does for it and that the number is missing. Nothing is estimated
+> or invented. The verifier is deployable as-is (`render.yaml`, README) if that decision changes.
 
 ---
 
@@ -138,10 +138,12 @@ retried), `POST /verify` 8.4 s (3 URLs, 3 model calls).
 
 ### Cold start and timeouts
 
-**TODO (Render): measured cold-start cost.** Procedure (in README): let the Render instance idle
-> 15 minutes, then run `tests/worker_matrix.py verifier --url https://<service>.onrender.com`; its first
-`GET /healthz` latency is the cold wake-up, the later ones are warm. Then start run 1 and read the
-pre-warm and `/verify` lines in `traces/orchestrator.jsonl`.
+**Cold start: not measured.** The verifier runs locally, so it never sleeps; run 1's pre-warm
+`GET /healthz` (2,375 ms) is the IPv6-fallback delay above, not a wake-up. The cost the PDF describes
+("about a minute" for a free Render instance) is therefore an assumption in the configuration below,
+not a measurement from these runs. How it would be measured: let the instance idle > 15 minutes, run
+`tests/worker_matrix.py verifier --url https://<service>.onrender.com` (first `/healthz` = cold, later
+ones = warm), then start a run and read the pre-warm and `/verify` lines in `traces/orchestrator.jsonl`.
 
 How the timeouts are chosen ([settings.py](backend/app/orchestrator/settings.py) `response_timeout`):
 
@@ -157,7 +159,8 @@ researcher: 240 s + 0 s + 20 s = 260 s       verifier: 150 s + 90 s + 20 s = 260
   budget, and the 20 s slack covers the gap between the worker's clock starting (request received)
   and the orchestrator's (request sent).
 - **Plus a cold start**, because a sleeping Render instance only receives the request after it wakes.
-  90 s is "about a minute" (PDF) with margin; **TODO (Render)**: replace with the measured value + margin.
+  90 s is "about a minute" (PDF) with margin. It is unmeasured (verifier not on Render), and it is
+  the one number in this section taken from the PDF rather than from my traces.
 - **Cold start mostly hidden by a pre-warm**: at the start of each run the orchestrator sends
   `GET /healthz` to the verifier in a background thread (DECISIONS.md D12). The researcher takes
   45–75 s (measured), so a ~1-minute wake-up should overlap almost completely with useful work. The
@@ -246,7 +249,9 @@ above the worker's own budget, this only happens if the worker overruns its dead
 the verifier's *admission control* (model cooldown, busy) deletes the in-flight entry, so the retry
 runs the work: correct, because no work was done.
 
-**What changes if Render restarted the verifier in between.** The registry is a Python dict in the
+**What changes if Render restarted the verifier in between.** (Here the verifier is local, so the
+same thing happens if its process is restarted; on Render it would happen after every 15-minute
+idle spin-down.) The registry is a Python dict in the
 process's memory (PDF allows this; DECISIONS.md D13). A restart — a free instance spinning down after
 15 idle minutes, a redeploy, a crash — empties it. The retry then looks *new*:
 
