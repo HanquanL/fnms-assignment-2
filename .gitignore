@@ -17,9 +17,11 @@ Thumbs.db
 
 
 # Tracker secrets (Gemini / Tavily API keys) -- never commit.
-# Leading slash = only the repo-root .env. backend/.env and frontend/.env
-# stay committed on purpose (throwaway DB connection string / public API URL).
+# Leading slash = only the repo-root .env. frontend/.env stays committed (it only holds the
+# public API URL). backend/.env holds the database URL and JWT secret: never committed (A2 §14);
+# copy backend/.env.example.
 /.env
+backend/.env
 
 
 # Tracker development runs (the graded run1/run2 reports and traces ARE committed)

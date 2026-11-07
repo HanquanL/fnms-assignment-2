@@ -55,8 +55,21 @@ class Budget:
         if self.elapsed() >= self.max_wall_seconds:
             raise BudgetExceeded(f"max_wall_seconds ({self.max_wall_seconds:g}) reached")
 
-    def add_model_call(self, usage: Usage) -> None:
+    def reserve_step(self, est_tokens: int) -> None:
+        """BEFORE every model request, including retries and the final finish call: one step is
+        taken from the budget (a request that fails still counts as a model call), and the call is
+        refused if its worst-case token use would cross max_total_tokens. Limits are checked before
+        spending, never after."""
+        if self.steps >= self.max_steps:
+            raise BudgetExceeded(f"max_steps ({self.max_steps}) reached")
+        if self.tokens + est_tokens > self.max_total_tokens:
+            raise BudgetExceeded(f"max_total_tokens ({self.max_total_tokens:,}) would be exceeded: used "
+                                 f"{self.tokens:,}, next call may need up to {est_tokens:,}")
         self.steps += 1
+
+    def add_model_call(self, usage: Usage) -> None:
+        """After a successful call: record the tokens it actually used. Its step was already
+        taken by reserve_step."""
         self.prompt_tokens += usage.prompt
         self.output_tokens += usage.output
         self.thinking_tokens += usage.thinking

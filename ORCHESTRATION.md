@@ -385,7 +385,7 @@ tokens and searches as the proxy (no paid price is quoted because none was charg
 
 | | A1B run1 | A1B run2 | A2 run 1 | A2 run 2 | A2 run 3 |
 |---|---|---|---|---|---|
-| Model calls (researcher + verifier) | 16 | 16 | 10 + 5 = **15** | 15 + 3 = **18** | 10 + 3 = **13** |
+| Model calls (researcher + verifier)² | 16 | 16 | 10 + 5 = **15** | 15 + 3 = **18** | 10 + 3 = **13** |
 | Tokens | 165,064 | 181,553 | 142,857 + 13,760 = **156,617** | 149,274 + 5,276 = **154,550** | 92,887 + 7,365 = **100,252** |
 | Tavily searches | 7 | 7 | 6 | 8 | 8 |
 | HTTP requests to web pages (incl. redirects) | 6 calls¹ | 2 calls¹ | 8 + 8 = 16 | 5 + 5 = 10 | 6 + 6 = 12 |
@@ -393,6 +393,10 @@ tokens and searches as the proxy (no paid price is quoted because none was charg
 | Developments / claims | 3 / – | 5 / – | 4 / 9 | 3 / 6 | 3 / 3 |
 
 ¹ A1B counted `fetch_article` calls, not redirect hops, so its fetch numbers are not comparable.
+² All runs in this document were made before the 2026-11-07 budget fix (DECISIONS.md D26). Their
+"model calls" count only requests that got an answer; failed requests that were retried appear as
+`retry` lines in the traces but were not counted as steps. Since the fix, every request is a step. In
+these runs that adds at most the retries visible in the traces (e.g. one Gemini 429 in the Render run).
 
 **Marginal cost of the verifier**, measured: 3–5 model calls, **5,276–13,760 tokens (3–9% of the
 run's tokens)**, 8.4–12.8 s of wall time (10–21%), and one extra fetch per cited URL. The researcher

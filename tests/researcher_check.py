@@ -24,7 +24,7 @@ from shared.contract import ResearchResult, WorkerResponse  # noqa: E402
 from shared.tracelog import REQUIRED, TraceLog  # noqa: E402
 from shared.workerkit import Cooldown  # noqa: E402
 from tracker.config import load_config  # noqa: E402
-from tracker.errors import RetriesExhausted, TerminalError  # noqa: E402
+from tracker.errors import RetriesExhausted, TerminalError, TransientError  # noqa: E402
 from tracker.fetch import FetchResult, fetch_article  # noqa: E402
 from tracker.llm.base import ModelTurn, Pacer, ToolCall, Usage  # noqa: E402
 from tracker.search import SearchHit, SearchResponse  # noqa: E402
@@ -217,6 +217,48 @@ r = client.post("/research", json=envelope(budget={"max_steps": 10, "max_fetches
                 headers=AUTH)
 check("max_fetches=1 and a redirect: the 2nd hop is refused before it is sent",
       r.json()["usage"]["fetches"] == 1 and web.requests == [REDIRECTING], f"{r.text[:300]} {web.requests}")
+
+print("\nbudget is reserved before every model request (review finding 2)")
+for name, budget, max_calls in (("max_steps=0", {"max_steps": 0, "max_fetches": 8, "max_tokens": 40000}, 0),
+                                ("max_steps=1", {"max_steps": 1, "max_fetches": 8, "max_tokens": 40000}, 1),
+                                ("max_tokens=1", {"max_steps": 10, "max_fetches": 8, "max_tokens": 1}, 0),
+                                ("max_tokens=9000 (below one call's worst case)",
+                                 {"max_steps": 10, "max_fetches": 8, "max_tokens": 9000}, 0)):
+    llm = FakeLLM(HAPPY)
+    client, web, _ = make(llm)
+    r = client.post("/research", json=envelope(budget=budget), headers=AUTH)
+    out = r.json()
+    u = out["usage"]
+    check(f"{name}: {llm.calls} model call(s) (max {max_calls}), usage within the share",
+          llm.calls <= max_calls and u["steps"] <= budget["max_steps"] and u["tokens"] <= budget["max_tokens"]
+          and out["status"] == "partial", f"calls={llm.calls} {r.text[:300]}")
+
+
+class FlakyLLM(FakeLLM):
+    """calls counts every request; the scripted turns advance only on successful ones."""
+    def __init__(self, turns, fails):
+        super().__init__(turns)
+        self.fails, self.ok = fails, 0
+
+    def generate(self, system, history, tools):
+        self.calls += 1
+        if self.calls <= self.fails:
+            raise TransientError("Gemini server error (503)")
+        self.ok += 1
+        return self.turns[min(self.ok, len(self.turns)) - 1]
+
+
+llm = FlakyLLM(HAPPY, fails=2)
+client, web, _ = make(llm)
+r = client.post("/research", json=envelope(), headers=AUTH)
+check("2 transient failures then success: every request is a step (steps == model calls == 5)",
+      r.json()["usage"]["steps"] == llm.calls == 5, f"calls={llm.calls} {r.text[:300]}")
+llm = FlakyLLM(HAPPY, fails=10)
+client, web, _ = make(llm)
+r = client.post("/research", json=envelope(budget={"max_steps": 3, "max_fetches": 8, "max_tokens": 40000}),
+                headers=AUTH)
+check("retries can't go past max_steps=3 (3 calls, then stop)",
+      llm.calls == 3 and r.json()["usage"]["steps"] == 3, f"calls={llm.calls} {r.text[:300]}")
 
 print("\nthe tracker's real fetch_article honours on_hop (no network needed)")
 policy = FetchPolicy.from_config(load_config()["fetch"])

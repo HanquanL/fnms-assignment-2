@@ -79,12 +79,13 @@ def run_verify(job: Job, deps: Deps) -> Reply:
             if usage["tokens"] + need > budget.max_tokens:
                 raise _Stop("budget_exhausted", f"token budget would be exceeded ({usage['tokens']:,} used, "
                                                 f"next call may need {need:,} of {budget.max_tokens:,})")
+            usage["steps"] += 1   # reserved BEFORE the request: a failed or retried call is still a call
             t0 = time.monotonic()
             try:
                 out = deps.judge.judge(payload, text, max_chars=deps.max_chars_to_model,
                                        timeout=max(1.0, min(deps.model_timeout, left - 1.0)))
             except ModelTransient as e:
-                job.trace.log(**ids, step=usage["steps"] + 1, direction="out",
+                job.trace.log(**ids, step=usage["steps"], direction="out",
                               endpoint_or_tool=f"model:{deps.judge.model}", status="retry",
                               latency_ms=int((time.monotonic() - t0) * 1000), attempt=attempt, tokens=0,
                               detail=str(e))
@@ -98,12 +99,11 @@ def run_verify(job: Job, deps: Deps) -> Reply:
                 deps.sleep(wait)
                 continue
             except ModelTerminal as e:
-                job.trace.log(**ids, step=usage["steps"] + 1, direction="out",
+                job.trace.log(**ids, step=usage["steps"], direction="out",
                               endpoint_or_tool=f"model:{deps.judge.model}", status="failed",
                               latency_ms=int((time.monotonic() - t0) * 1000), attempt=attempt, tokens=0,
                               detail=str(e))
                 raise
-            usage["steps"] += 1
             usage["tokens"] += out.tokens
             job.trace.log(**ids, step=usage["steps"], direction="out", endpoint_or_tool=f"model:{deps.judge.model}",
                           status="ok" if out.parsed else "bad_output",

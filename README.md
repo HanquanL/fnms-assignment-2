@@ -178,7 +178,9 @@ Traces: each service appends to `traces/<service>.jsonl` (git-ignored); the grad
 - For the tracker, two free API keys (no credit card for either):
   - **Gemini**: <https://aistudio.google.com/api-keys>. Don't enable billing: on the free tier the spend cap is $0.
   - **Tavily**: <https://app.tavily.com> (1,000 free credits a month).
-- No local database: the app uses a hosted Neon Postgres database whose connection string is in `backend/.env`.
+- No local database: the app uses a hosted Neon Postgres database. Its connection string and the JWT
+  secret go in `backend/.env`, which is **not** in the repository: copy `backend/.env.example` and fill it
+  in (step 1).
 
 ## Quick start
 
@@ -189,6 +191,7 @@ order to run them. Windows PowerShell first; macOS / Linux equivalents follow ea
 
 ```powershell
 cd backend
+Copy-Item .env.example .env      # then fill in DATABASE_URL and JWT_SECRET
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -338,9 +341,11 @@ config.yaml (policy, read-only)        A1 backend (memory)                      
 
 ## Environment
 
-`backend/.env` and `frontend/.env` are **committed on purpose** so the project runs as-is. They contain only
-a throwaway Neon database created for this course and a random JWT secret used nowhere else. The repository
-root `.env` holds the tracker's API keys and is **git-ignored**; `.env.example` lists its variables.
+Secrets live only in git-ignored files and in Render's environment settings. The repository root `.env`
+holds the model/search keys and service tokens; `backend/.env` holds the database connection string and
+the JWT secret. Neither is committed; `.env.example` and `backend/.env.example` list every variable with a
+placeholder. (Until 2026-11-07 `backend/.env` was committed; those credentials were rotated, see
+DECISIONS.md D25.) `frontend/.env` is committed: it only holds the public API URL.
 
 **`.env` (repository root, not committed)**
 
@@ -351,7 +356,7 @@ root `.env` holds the tracker's API keys and is **git-ignored**; `.env.example` 
 | `TRACKER_USERNAME`, `TRACKER_PASSWORD` | The A1 account the tracker logs in as (`NYUgrader` / `Courant2026!`, published in the assignment) |
 | `TRACKER_API_URL` | Optional. Backend URL; defaults to `backend.api_url` in `config.yaml` (`http://localhost:8000`) |
 
-**`backend/.env`**
+**`backend/.env` (not committed; copy `backend/.env.example`)**
 
 | Variable | Purpose |
 |----------|---------|

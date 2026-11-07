@@ -95,6 +95,37 @@ login path) was left untouched and is not part of the A2 commits. A2 work happen
   in the dashboard (Blueprints need a connected Git provider, which the student didn't want).
 - **UI check.** The student looked at the Tracker page on 2026-11-07 (all four labels, excerpts, the
   unreachable fault claims, run history) and reported that everything looked right.
-- **D24: database credentials stay public.** `backend/.env` (the Neon connection string) is committed
+- **D24 (reversed the same day by D25, below): database credentials stay public.** `backend/.env` (the Neon connection string) is committed
   in the public `fnms-assignment-2` repository, as it was in 1B. The student accepted this: it is a
   throwaway course database. Anyone with the repository can read and write it.
+
+## 2026-11-07: fixes from an external review
+
+An external review of the pushed repository against the PDF raised three P1 findings. All three were
+reproduced with fakes (no paid calls) before fixing, and each fix has regression tests.
+
+- **Finding 3: a malformed worker error crashed the run before it was saved.** A worker answering
+  HTTP 500/503 with `{"error": "bad"}` made `worker_client.py` call `.get()` on a string; the run never
+  reached the report or the database (PDF §5–6). Fix: `_error_field()` reads `error.code`/`error.message`
+  only if `error` is an object; and in `service.py` any unexpected exception while calling or reading
+  ONE worker marks that worker failed (full share charged) instead of escaping. 24 new cases in
+  `tests/orchestrator_check.py` (HTTP 500/503/400/200 × `"bad"`/list/number × both workers).
+- **Finding 2: workers could exceed their budget share** (PDF §8). The verifier counted a step only
+  after a successful model response (3 calls with `max_steps=1`); the researcher's final finish call
+  ignored `max_steps` (a call with `max_steps=0`) and tokens were checked only after spending them (a
+  call with `max_tokens=1`). Fix, D26: a step and a worst-case token reservation are taken **before every
+  model request** — first try, retry, fallback model and the final finish call alike
+  (`Budget.reserve_step` in `tracker/budget.py`, `estimate_tokens` in `tracker/agent.py`; the verifier
+  already reserved tokens and now also reserves the step first). A failed request still counts as a step.
+  New checks in `tests/verifier_check.py` and `tests/researcher_check.py`. This also changes the A1B CLI's
+  counting (retries now count as steps), which is the more honest count; its tests still pass.
+- **Finding 1, D25 (reverses D24): `backend/.env` is no longer committed.** It held the live Neon
+  connection string and the JWT secret in the public repository, which the review correctly says
+  doesn't meet §14. Now: `backend/.env` is git-ignored and untracked (`git rm --cached`; the local file
+  stays), `backend/.env.example` has placeholders, and the README says to copy it. The JWT secret was
+  rotated locally (existing logins must sign in again). **The Neon password must be reset by the
+  student in the Neon console** (I can't change account credentials) and the new connection string put
+  in the local `backend/.env`. The old values remain in the git history of both repositories; resetting
+  them is what makes that history harmless, so the history is not rewritten. Trade-off: a grader now
+  needs a `DATABASE_URL` to run the backend (shared privately, or their own Neon database: `create_all`
+  builds the tables on first start).

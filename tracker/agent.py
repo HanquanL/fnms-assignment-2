@@ -82,6 +82,26 @@ SearchFn = Callable[..., SearchResponse]
 FetchFn = Callable[[str], FetchResult]
 
 
+def estimate_tokens(system: str, history: list, tools: list[ToolSpec], max_output: int) -> int:
+    """Worst-case tokens for the next call, computed BEFORE making it: everything we will send
+    (system prompt, whole history, tool schemas), at ~3 characters per token -- an over-estimate for
+    English and JSON -- plus the most the model may write back (max_output_tokens)."""
+    def size(x) -> int:
+        try:
+            return len(json.dumps(x, ensure_ascii=False, default=str))
+        except (TypeError, ValueError):
+            return len(str(x))
+    chars = len(system) + size([t.parameters for t in tools]) + sum(len(t.description) for t in tools)
+    for item in history:
+        if isinstance(item, UserText):
+            chars += len(item.text)
+        elif isinstance(item, ModelTurn):
+            chars += size(item.raw) + len(item.text) + size([c.args for c in item.tool_calls])
+        elif isinstance(item, ToolResults):
+            chars += size([r.content for r in item.results])
+    return chars // 3 + max_output
+
+
 def untrusted(text: str, source: str) -> str:
     """Fence web text so the model (and anyone reading the trace) can see where it came from.
     A page can't close the fence early: its own closing tags are defused."""
@@ -154,6 +174,7 @@ def run_agent(cfg: Mapping, llm: LLMClient, search: SearchFn, fetch: FetchFn, tr
         pacer._sleep = sleep  # a pacer shared across worker requests must not sleep past THIS deadline
     retry = retry or RetryPolicy.from_config(cfg["retry"])
     max_chars = int(cfg["fetch"]["max_chars_to_model"])
+    max_output = int(cfg["model"]["max_output_tokens"])
     started_at = datetime.now(timezone.utc).isoformat()
 
     system = build_system(cfg)
@@ -172,8 +193,10 @@ def run_agent(cfg: Mapping, llm: LLMClient, search: SearchFn, fetch: FetchFn, tr
               memory={"seen_urls": len(memory.seen_urls), "developments": len(memory.developments)})
 
     def on_retry(target: str):
+        # for the model, the failed attempt already took its step (reserve_step), so it is budget.steps
         return lambda attempt, err, delay: trace.log(
-            "retry", step=budget.steps + 1, target=target, attempt=attempt, error=str(err), wait_s=round(delay, 1))
+            "retry", step=budget.steps if target == "model" else budget.steps + 1, target=target, attempt=attempt,
+            error=str(err), wait_s=round(delay, 1))
 
     # ---------- tools ----------
 
@@ -345,6 +368,9 @@ def run_agent(cfg: Mapping, llm: LLMClient, search: SearchFn, fetch: FetchFn, tr
                     raise BudgetExceeded("time budget: too little time left for another model call")
                 if hasattr(active["llm"], "call_timeout"):
                     active["llm"].call_timeout = max(1.0, left - 1.5)
+            # every attempt -- first try, retry, fallback, final finish -- takes a step and must fit
+            # the token budget BEFORE the request is sent (raises BudgetExceeded otherwise)
+            budget.reserve_step(estimate_tokens(system, history, tools, max_output))
             return active["llm"].generate(system, history, tools)
 
         def with_retries() -> ModelTurn:
@@ -360,11 +386,11 @@ def run_agent(cfg: Mapping, llm: LLMClient, search: SearchFn, fetch: FetchFn, tr
                 if active["fallback"] is None:
                     raise
                 old, active["llm"], active["fallback"] = active["llm"].model, active["fallback"], None
-                trace.log("model", step=budget.steps + 1, model=old, status="fallback",
+                trace.log("model", step=budget.steps, model=old, status="fallback",
                           detail=f"switching to {active['llm'].model} after: {e}")
                 turn = with_retries()
         except TerminalError as e:
-            trace.log("model", step=budget.steps + 1, model=active["llm"].model, status="error",
+            trace.log("model", step=budget.steps, model=active["llm"].model, status="error",
                       latency_ms=int((time.monotonic() - t0) * 1000), error=f"{type(e).__name__}: {e}")
             raise
         budget.add_model_call(turn.usage)

@@ -398,6 +398,31 @@ r = client.post("/verify", json=envelope([QWEN_CLAIM], budget={"max_steps": 5, "
 check("token reservation: next call could exceed max_tokens -> refused before calling",
       r.json()["status"] == "partial" and judge.calls == 0 and r.json()["usage"]["tokens"] == 0, r.text[:300])
 
+print("\nbudget is reserved before every model request (review finding 2)")
+
+
+class FlakyJudge(FakeJudge):
+    """Fails with a transient error `fails` times, then answers."""
+    def __init__(self, fails):
+        super().__init__(supported_with("Alibaba released Qwen 4 today"))
+        self.fails = fails
+
+    def judge(self, claims, page_text, *, max_chars, timeout):
+        if self.calls < self.fails:
+            self.calls += 1
+            raise ModelTransient("model server error (503)")
+        return super().judge(claims, page_text, max_chars=max_chars, timeout=timeout)
+
+
+for max_steps, fails in ((1, 2), (2, 5), (3, 1)):
+    client, web, judge, _ = make(FlakyJudge(fails))
+    r = client.post("/verify", json=envelope([QWEN_CLAIM], budget={"max_steps": max_steps, "max_fetches": 8,
+                                                                   "max_tokens": 40000}), headers=AUTH)
+    out = r.json()
+    check(f"max_steps={max_steps}, {fails} transient failure(s): model calls ({judge.calls}) <= max_steps, "
+          f"and every call is counted (steps={out['usage']['steps']})",
+          judge.calls <= max_steps and out["usage"]["steps"] == judge.calls, r.text[:300])
+
 print("\nmodel failures")
 client, web, judge, _ = make(FakeJudge(error=ModelTerminal("model rejected the API key (400)")))
 r = client.post("/verify", json=(b := envelope([QWEN_CLAIM])), headers=AUTH)

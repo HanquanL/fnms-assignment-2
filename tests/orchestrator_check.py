@@ -337,6 +337,22 @@ w = FakeWorkers(lambda env, a: json_resp(ok_research(env, [dev(1)])),
 r, *_ = run(world, w)
 check("401 (no work done) -> charged 0 for the verifier", r.stats["charged_steps"] == 10, str(r.stats["charged_steps"]))
 
+print("\nmalformed error bodies (review finding 3): the run is still saved")
+for code in (500, 503, 400, 200):
+    for bad_error in ("bad", ["x"], 42):
+        for who in ("verifier", "researcher"):
+            world = new_world()
+            junk = (lambda env, a, code=code, e=bad_error: httpx.Response(code, json={"error": e}))
+            w = FakeWorkers(junk if who == "researcher" else (lambda env, a: json_resp(ok_research(env, [dev(1)]))),
+                            junk if who == "verifier" else (lambda env, a: json_resp(verdicts_for(env))))
+            try:
+                r, claims, detail, *_ = run(world, w)
+                ok = r.status == "partial" and detail.failed_workers == [who]
+                why = f"{r.status} {detail.failed_workers} {r.stats.get(who + '_error')}"
+            except Exception as e:  # noqa: BLE001
+                ok, why = False, f"crashed: {type(e).__name__}: {e}"
+            check(f"{who} answers HTTP {code} {{\"error\": {bad_error!r}}} -> run saved partial, {who} failed", ok, why)
+
 print("\npartial workers")
 world = new_world()
 w = FakeWorkers(lambda env, a: json_resp(ok_research(env, [dev(1), dev(2)])),

@@ -180,14 +180,18 @@ class Orchestrator:
         if not ledger.reserve(r_env["request_id"], s.researcher.share):
             r_out.status, r_out.error = "skipped", "allocation exceeds the run budget"
         else:
-            call = self.client.call(s.researcher, r_env, step=1)
-            resp = _settle(call, r_env, s.researcher, ledger, r_out)
-            if resp is not None:
-                try:
+            try:
+                call = self.client.call(s.researcher, r_env, step=1)
+                resp = _settle(call, r_env, s.researcher, ledger, r_out)
+                if resp is not None:
                     developments = check_research(resp, s.k)
-                except InvalidResponse as e:     # discard ALL of it; it never reaches the report
-                    ledger.charge_full(r_env["request_id"])
-                    r_out.status, r_out.error, developments = "failed", f"invalid response: {e}", []
+            except InvalidResponse as e:         # discard ALL of it; it never reaches the report
+                ledger.charge_full(r_env["request_id"])
+                r_out.status, r_out.error, developments = "failed", f"invalid response: {e}", []
+            except Exception as e:  # noqa: BLE001 -- a bug or surprise here must not lose the run
+                ledger.charge_full(r_env["request_id"])
+                r_out.status, developments = "failed", []
+                r_out.error = f"orchestrator could not process the researcher's answer ({type(e).__name__})"
 
         # ---- merge near-duplicate developments onto known keys (orchestrator-owned memory)
         keymap = canonical_keys([d.id for d in developments], known_keys)
@@ -217,14 +221,18 @@ class Orchestrator:
             if not ledger.reserve(v_env["request_id"], s.verifier.share):
                 v_out.status, v_out.error = "skipped", "not enough run budget left for the verifier"
             else:
-                call = self.client.call(s.verifier, v_env, step=2)
-                resp = _settle(call, v_env, s.verifier, ledger, v_out)
-                if resp is not None:
-                    try:
+                try:
+                    call = self.client.call(s.verifier, v_env, step=2)
+                    resp = _settle(call, v_env, s.verifier, ledger, v_out)
+                    if resp is not None:
                         verdicts = check_verify(resp, [c["claim_id"] for c in all_claims])
-                    except InvalidResponse as e:
-                        ledger.charge_full(v_env["request_id"])
-                        v_out.status, v_out.error, verdicts = "failed", f"invalid response: {e}", {}
+                except InvalidResponse as e:
+                    ledger.charge_full(v_env["request_id"])
+                    v_out.status, v_out.error, verdicts = "failed", f"invalid response: {e}", {}
+                except Exception as e:  # noqa: BLE001
+                    ledger.charge_full(v_env["request_id"])
+                    v_out.status, verdicts = "failed", {}
+                    v_out.error = f"orchestrator could not process the verifier's answer ({type(e).__name__})"
         for c in all_claims:
             v = verdicts.get(c["claim_id"])
             c["verdict"] = v.verdict if v else "unverified"

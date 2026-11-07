@@ -38,6 +38,17 @@ class CallResult:
     latency_ms: int             # whole call incl. retries and backoff, caller-side
 
 
+def _error_field(data: dict | None, key: str) -> str | None:
+    """error.<key> from an UNVALIDATED body. The body comes from a worker and may be malformed
+    ("error": "bad", "error": [1], no error at all), so never assume its shape: anything that isn't
+    an object with a scalar value yields None. Validation happens later, in validate.py."""
+    err = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(err, dict):
+        return None
+    value = err.get(key)
+    return str(value)[:200] if isinstance(value, (str, int, float, bool)) else None
+
+
 def _retry_after(resp: httpx.Response) -> float | None:
     try:
         v = resp.headers.get("retry-after")
@@ -87,7 +98,7 @@ class WorkerClient:
                     except ValueError:
                         data = None
                     usage = (data or {}).get("usage") if isinstance((data or {}).get("usage"), dict) else {}
-                    tokens = usage.get("tokens") if isinstance(usage.get("tokens"), int) else 0
+                    tokens = usage.get("tokens") if type(usage.get("tokens")) is int else 0
                     if resp.status_code not in TRANSIENT_STATUSES:
                         st = (data or {}).get("status") if resp.status_code == 200 else f"http_{resp.status_code}"
                         self.trace.log(run_id=run_id, request_id=rid, step=step, direction="out",
@@ -95,13 +106,12 @@ class WorkerClient:
                                        latency_ms=latency, attempt=attempt, tokens=tokens,
                                        http_status=resp.status_code, worker=w.name)
                         err = None if resp.status_code == 200 else (
-                            f"HTTP {resp.status_code}: "
-                            + str(((data or {}).get("error") or {}).get("message", "no message"))[:200])
+                            f"HTTP {resp.status_code}: " + (_error_field(data, "message") or "no valid error message"))
                         return CallResult(w.name, rid, True, resp.status_code, data, attempt, err,
                                           int((time.monotonic() - started) * 1000))
                     status = f"http_{resp.status_code}"
-                    last_error = f"HTTP {resp.status_code}" + (
-                        f": {((data or {}).get('error') or {}).get('code')}" if data else "")
+                    code = _error_field(data, "code")
+                    last_error = f"HTTP {resp.status_code}" + (f": {code}" if code else "")
                     wait = _retry_after(resp)
                     if wait is not None and wait > policy.max_retry_after:
                         self.trace.log(run_id=run_id, request_id=rid, step=step, direction="out",
