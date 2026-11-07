@@ -368,29 +368,34 @@ too (same day, minutes later).
 `random.Random(2630).sample(supported, 10)` over the claims of runs 1–3 in database order
 ([traces/a2-handcheck-selection.json](traces/a2-handcheck-selection.json); claim data in
 [traces/a2-claims-runs1-3.json](traces/a2-claims-runs1-3.json)). For each, the cited page was fetched
-again through the verifier's own guarded fetcher and read. **This check was done by Claude (the
-assistant that wrote the code), not by the student; the student should re-read these 13 before the
-demo.**
+again through the verifier's own guarded fetcher and read. **Two independent checks:** first by
+Claude (the assistant that wrote the code), on 2026-11-04; then by me, on 2026-11-07, opening each
+cited page in a browser and searching for the claim's wording, without relying on the stored excerpt.
+The two checks agree on all 13 verdicts. The last column notes what I saw on the page.
 
-| # | Run | Claim (short) | Verifier | Source says | Verdict right? |
-|---|---|---|---|---|---|
-| 1 | 1 | Moonshot released Kimi K3.1 Pro weights on Nov 4, 2026 | unsupported | "…whose weights — about 1.56 TB of them — became public on 4 November" (page date context 2026) | **No** — should be supported (model likely balked at the missing year in that sentence) |
-| 2 | 2 | LFM3 uses tri-hybrid design … text, vision, audio, decision | unsupported | "…weaves short convolutions, sliding-window attention, and global attention, the suite packs text, vision, audio, omni, and decision capabilities…" | **No** — supported (claim omits "omni", still true) |
-| 3 | 3 | Liquid AI announced LFM3-1.7B, open-weight, local agents and tool calling | unsupported | "Liquid AI announced LFM3-1.7B on October 27, 2026, as an open-weight model aimed at local agents, tool calling…" | **No** — supported. Cause found: the sentence is at character 18,685 of a 42,915-character page; the verifier sends the model only the first 15,000 |
-| 4 | 2 | Moonshot removed cyber data from K3.1 Pro training mix | supported | evidence on page verbatim | Yes |
-| 5 | 1 | Ricursive released Ripple-65B Preview on Nov 4, 2026 | supported | "Ripple-65B Preview, released by Ricursive Intelligence on 4 November 2026" | Yes |
-| 6 | 1 | Baseten released joey-1, 2B, by Base Labs, Oct 29, 2026 | supported | evidence on page verbatim | Yes |
-| 7 | 2 | Moonshot set Nov 4, 2026 deadline for full weights | supported | "Moonshot said it planned to release the full Kimi K3.1 Pro model weights by November 4, 2026" | Yes |
-| 8 | 1 | Mistral released open weights of Mistral Large 4 "Le Chonk" | supported | evidence on page verbatim | Yes |
-| 9 | 2 | Liquid AI LFM3: six open-weight models, 1.7B base | supported | evidence on page verbatim | Yes |
-| 10 | 2 | ML4 weights on Hugging Face and via API | supported | "The weights for ML4 are being made available on Hugging Face and via its API." | Yes |
-| 11 | 1 | Mistral released ML4 weights as planned | supported | "As planned, Mistral has released the weights for its ML4 model." | Yes |
-| 12 | 2 | Mistral released ML4 weights for businesses/governments | supported | evidence on page verbatim | Yes |
-| 13 | 3 | Tencent announced Hy4, among leading open-source models | supported | evidence on page verbatim | Yes (the page says weights come "in the coming days"; the claim doesn't say they're out) |
+| # | Run | Claim (short) | Verifier | Source says | Verdict right? | Notes from my re-check |
+|---|---|---|---|---|---|---|
+| 1 | 1 | Moonshot released Kimi K3.1 Pro weights on Nov 4, 2026 | unsupported | "…whose weights — about 1.56 TB of them — became public on 4 November" | **No** — should be supported | The article places the release on November 4, 2026; the model likely balked at the year missing from that one sentence |
+| 2 | 2 | LFM3 uses tri-hybrid design … text, vision, audio, decision | unsupported | "…weaves short convolutions, sliding-window attention, and global attention, the suite packs text, vision, audio, omni, and decision capabilities…" | **No** — should be supported | All three components and all claimed capabilities are listed; leaving out "omni" doesn't make the claim false |
+| 3 | 3 | Liquid AI announced LFM3-1.7B, open-weight, local agents and tool calling | unsupported | "Liquid AI announced LFM3-1.7B on October 27, 2026, as an open-weight model aimed at local agents, tool calling…" | **No** — should be supported | Stated explicitly, but at character 18,685 of a 42,915-character page; the verifier sends the model only the first 15,000 |
+| 4 | 2 | Moonshot removed cyber data from K3.1 Pro training mix | supported | evidence on page verbatim | Yes | Supported as worded, but it is Moonshot's own account, reported by the article |
+| 5 | 1 | Ricursive released Ripple-65B Preview on Nov 4, 2026 | supported | "Ripple-65B Preview, released by Ricursive Intelligence on 4 November 2026" | Yes | Company, model and date all stated |
+| 6 | 1 | Baseten released joey-1, 2B, by Base Labs, Oct 29, 2026 | supported | evidence on page verbatim | Yes | Date, size and Base Labs all in the opening paragraph |
+| 7 | 2 | Moonshot set Nov 4, 2026 deadline for full weights | supported | "Moonshot said it planned to release the full Kimi K3.1 Pro model weights by November 4, 2026" | Yes | Confirms a plan, not that the release happened — which is what the claim says |
+| 8 | 1 | Mistral released open weights of Mistral Large 4 "Le Chonk" | supported | evidence on page verbatim | Yes | "Trillion-parameter" is in the next sentence, outside the stored excerpt; the excerpt alone doesn't carry the size |
+| 9 | 2 | Liquid AI LFM3: six open-weight models, 1.7B base | supported | evidence on page verbatim | Yes | Six variants and the 1.7B base both stated |
+| 10 | 2 | ML4 weights on Hugging Face and via API | supported | "The weights for ML4 are being made available on Hugging Face and via its API." | Yes | Supported as worded, though API access doesn't by itself mean downloadable weights |
+| 11 | 1 | Mistral released ML4 weights as planned | supported | "As planned, Mistral has released the weights for its ML4 model." | Yes | Stated directly |
+| 12 | 2 | Mistral released ML4 weights for businesses/governments | supported | evidence on page verbatim | Yes | Release and audience in the opening paragraph |
+| 13 | 3 | Tencent announced Hy4, among leading open-source models | supported | evidence on page verbatim | Yes | "Among the leading" is Tencent's own assessment, and the page says weights come later; the claim only says "announced" |
 
-**Result: 3 wrong verdicts out of 13 checked.** Unsupported: **3 of 3 wrong** (all false negatives).
-Supported: **0 of 10 wrong**. Every supported excerpt was found verbatim on the page by the code check
-as well.
+**Result: 3 wrong verdicts out of 13 checked** (both checks agree). Unsupported: **3 of 3 wrong**
+(all false negatives). Supported: **0 of 10 wrong**. Every supported excerpt was found verbatim on the
+page by the code check as well.
+
+The notes show a limit the verdict labels hide: "supported" means the page says so, not that it is
+true. In #4 and #13 the page reports the company's own statement; #8's excerpt shows only part of the
+claim. The verifier is checking attribution to the source, which is what the PDF asks of it.
 
 ### So, was it worth it?
 

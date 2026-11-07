@@ -56,7 +56,7 @@ login path) was left untouched and is not part of the A2 commits. A2 work happen
 | D17 | `config.yaml` keeps the A1B `limits:` block next to the new `run_budget`/`allocation`. | `limits` is only read by the single-agent CLI (`python -m tracker run`), kept runnable as the baseline for ORCHESTRATION.md Q5; A2 runs use only `run_budget`/`allocation`. Commented in config.yaml. |
 | D18 | Worker URLs default to `http://127.0.0.1:800x`, not `localhost`. | Found in run 1's traces: on Windows `localhost` tries `::1` first, uvicorn listens on IPv4 only, and every call paid ~2 s (4 s for a refused connection). Changed after the measured runs; the runs' numbers are reported as measured. |
 | D19 | Evidence quotes in the researcher's report are dropped at the wire boundary (`researcher/core.py` `to_wire`). | Contract: the verifier must not see them, and the orchestrator has no use for them (D10). |
-| D20 | The hand-check in ORCHESTRATION.md Q5 was done by Claude (fetching each page again and reading it), and is labelled as such. | The student must be able to defend it; the table quotes the page text so it can be re-checked quickly. |
+| D20 | The hand-check in ORCHESTRATION.md Q5 was done twice: by Claude (2026-11-04, fetching each page again and reading it) and independently by the student (2026-11-07, in a browser). Both agree on all 13 verdicts; the student's notes are in the table's last column. | The student must be able to defend it; the table quotes the page text so it can be re-checked quickly. |
 
 ## Live runs and what was NOT done (2026-11-04)
 
