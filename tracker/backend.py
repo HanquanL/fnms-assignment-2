@@ -12,13 +12,18 @@ from tracker.errors import RetryPolicy, TerminalError, TransientError, call_with
 
 
 class BackendClient:
-    def __init__(self, base_url: str, username: str, password: str, retry: RetryPolicy, *,
-                 timeout: float = 30.0, transport: httpx.BaseTransport | None = None, sleep=None):
+    """Logs in with username/password, or (for runs started from the web page) uses a
+    short-lived token the backend issued for the user who clicked Run."""
+
+    def __init__(self, base_url: str, username: str | None, password: str | None, retry: RetryPolicy, *,
+                 token: str | None = None, timeout: float = 30.0,
+                 transport: httpx.BaseTransport | None = None, sleep=None):
         self.base = base_url.rstrip("/")
         self._username, self._password = username, password
         self._retry = retry
         self._client = httpx.Client(timeout=timeout, transport=transport)
-        self._token: str | None = None
+        self._token: str | None = token
+        self._token_only = token is not None and username is None
         self._sleep = sleep
 
     # ---------- plumbing ----------
@@ -54,6 +59,9 @@ class BackendClient:
     # ---------- API ----------
 
     def login(self) -> None:
+        if self._token_only:
+            raise TerminalError("the run token from the backend was rejected (expired or invalid); "
+                                "start the run again from the Tracker page")
         resp = self._call("POST", "/api/auth/login", auth=False,
                           json={"username": self._username, "password": self._password})
         if resp.status_code == 401:

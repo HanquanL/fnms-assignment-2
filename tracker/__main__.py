@@ -42,8 +42,11 @@ def make_llms(cfg):
 
 def make_backend(cfg) -> BackendClient:
     url = os.environ.get("TRACKER_API_URL") or (cfg.get("backend") or {}).get("api_url", "http://localhost:8000")
-    return BackendClient(url, secret("TRACKER_USERNAME"), secret("TRACKER_PASSWORD"),
-                         RetryPolicy.from_config(cfg["retry"]))
+    retry = RetryPolicy.from_config(cfg["retry"])
+    token = os.environ.get("TRACKER_TOKEN")  # set by the backend when a run is started from the web page
+    if token:
+        return BackendClient(url, None, None, retry, token=token)
+    return BackendClient(url, secret("TRACKER_USERNAME"), secret("TRACKER_PASSWORD"), retry)
 
 
 def _summary_line(result) -> str:
