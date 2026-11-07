@@ -125,6 +125,20 @@ backend\.venv\Scripts\python.exe tests\worker_matrix.py verifier
 backend\.venv\Scripts\python.exe tests\worker_matrix.py researcher
 ```
 
+Fault injection through the whole system (shows the **unreachable** label on the Tracker page): start
+the proxy, then start the backend with `RESEARCHER_URL` pointing at it, and run as usual. The proxy
+forwards to the real researcher and adds two "FAULT INJECTION TEST" claims citing
+`169.254.169.254` and `localhost`, which the verifier refuses without fetching.
+
+```powershell
+backend\.venv\Scripts\python.exe -m uvicorn tests.fault_proxy:app --port 8011
+```
+```powershell
+cd backend; $env:RESEARCHER_URL="http://127.0.0.1:8011"; .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+```
+
+Afterwards restart the backend without `RESEARCHER_URL` (`Remove-Item Env:RESEARCHER_URL`).
+
 Traces: each service appends to `traces/<service>.jsonl` (git-ignored); the graded runs are copied to
 `traces/a2-*/` with `tests/extract_run.py`.
 

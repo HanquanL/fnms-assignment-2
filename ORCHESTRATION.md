@@ -27,6 +27,16 @@ React Tracker page ──JWT──> orchestrator (backend, :8000) ──Bearer R
 | run 3 | `a1d105c1-963b-49c9-8d60-a485925df107` | [traces/a2-run3/](traces/a2-run3/) |
 | verifier down (fault injection) | `f7395abd-aec3-4655-b338-ae55e43a9e73` | [traces/a2-fault-verifier-down/](traces/a2-fault-verifier-down/) |
 | researcher down (fault injection) | `d4f7aa79-24d1-47b8-bd1c-638123c6bb41` | [traces/a2-fault-researcher-down/](traces/a2-fault-researcher-down/) |
+| unsafe URLs (fault injection, 2026-11-07) | `aba17e42-e213-4020-973e-5fb6cad8df0b` | [traces/a2-fault-unsafe-urls/](traces/a2-fault-unsafe-urls/) |
+
+The unsafe-URL run is a real run (real researcher, real verifier, saved to Neon) with one change:
+[tests/fault_proxy.py](tests/fault_proxy.py) sits between the orchestrator and the researcher and
+appends two claims, labelled "FAULT INJECTION TEST", that cite `http://169.254.169.254/latest/meta-data/`
+and `http://localhost/admin`. It plays a researcher that was tricked into citing internal addresses.
+Three runs on 2026-11-07 that are not used for any number here also sit in run history:
+`51d1b2fe` (an ordinary complete run that bypassed the proxy because of a port mix-up), `e50e1a8e`
+(the proxy could not reach the researcher: researcher failed, stale top K shown) and `4a01a5bc` (the
+verifier was not running: 13 claims unverified). Each was saved honestly with its real status.
 
 > **All three services run locally; the verifier is not deployed on Render.** This was a deliberate
 > decision (DECISIONS.md C8) and departs from the PDF, which asks for the verifier on Render's free
@@ -294,6 +304,7 @@ text goes into the verifier's prompt. Ways it can push a verdict:
 | **Code checks every supported excerpt against the page the verifier fetched**, after the PDF's normalization; a miss becomes `unsupported`, never the reverse | [verifier/evidence.py](verifier/evidence.py), [verifier/core.py](verifier/core.py) | (1): an invented quote is downgraded. Test: "page tells the model to mark it supported; quote not on the page -> unsupported" |
 | Claim and page are fenced; closing tags inside them are defused (`</claims` → `</ claims`) | `_fence` in [verifier/judge.py](verifier/judge.py) | (2). Test: "claim text can't close the <claims> fence early" |
 | System instruction says claims and page are data; the model has **no tools** and its output is a JSON schema | [verifier/judge.py](verifier/judge.py) | There is nothing to call, no URL to fetch, nothing to escalate to |
+| The fetch guard checks every resolved address and every redirect hop before any request; a refused URL is `unreachable` | [verifier/fetchguard.py](verifier/fetchguard.py) | A claim (or a page's redirect) pointing at internal addresses. Live: the unsafe-URL fault run above, `hops: 0` for 169.254.169.254 and localhost |
 | Budgets, routing, tokens and the policy live in code/config the model never sees; the worker enforces the envelope's budget in code | [verifier/core.py](verifier/core.py), [config.yaml](config.yaml) | (4). Test: "budget unchanged by the page's 'raise max_fetches'" |
 | The orchestrator validates *every* verdict's `claim_id` against the ids it sent, rejects duplicates, extra fields, oversize evidence, usage above the share — and then discards the *whole* response | [validate.py](backend/app/orchestrator/validate.py) | A compromised or confused verifier can't add claims, overwrite another claim's verdict, or push text into the report. Ten malformed-response cases tested in `tests/orchestrator_check.py` |
 | The verifier never sees the researcher's reasoning or quotes | contract | Injection that fooled the researcher doesn't arrive pre-packaged as "evidence" |
@@ -358,9 +369,16 @@ itself varied (memory-free, fewer steps); that is noise, not a saving from the s
 | run 3 | 2 | 1 | 0 | 0 |
 | **total** | **15** | **3** | **0** | **0** |
 | verifier-down fault run | 0 | 0 | 0 | 8 (by design) |
+| unsafe-URL fault run | 9 | 1 | **2** (the 2 injected claims) | 0 |
 
-0 unreachable: the researcher only cites pages it managed to fetch, so the verifier could fetch them
-too (same day, minutes later).
+0 unreachable in runs 1–3: the researcher only cites pages it managed to fetch, so the verifier could
+fetch them too (same day, minutes later). The unsafe-URL run is the end-to-end check of the
+`unreachable` path: both injected claims came back `unreachable` with `evidence: null`, and the
+verifier's own trace shows `"status": "rejected", "hops": 0` for both — the guard refused them before
+any request was sent ("resolves to a link-local address (169.254.169.254)"; "host 'localhost' is not
+allowed"). Each rejection is logged at 234 ms: that is setting up the HTTPS client (loading the
+certificate store) before the URL check, not network time. The run's other claims were verified
+normally, and the run is `complete`: an unsafe source is a verdict, not a worker failure.
 
 ### Hand-check
 

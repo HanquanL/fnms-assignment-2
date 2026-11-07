@@ -64,3 +64,16 @@ login path) was left untouched and is not part of the A2 commits. A2 work happen
 - Branch `a2-orchestration` was pushed to `origin` = `fnms-assignment-1b` (commits `7a0a722`, `496ca88`) to let Render build it. The student then said nothing should go to `fnms-assignment-1b`; no further pushes were made. Whether to delete that remote branch is the student's call. `main` was never touched; nothing was force-pushed.
 - **Not done, by the student's decision: Render deployment.** Everything runs locally (C8).
 - **Not visually checked: the React page.** It lints and builds (`npm run build`), and the API it reads is covered by `tests/orchestrator_check.py`, but the built-in browser can't open the local dev server, so no one has looked at it yet.
+
+## 2026-11-07: unreachable label shown end to end
+
+- No real run had produced an `unreachable` claim, so the UI had never shown that label. Added
+  `tests/fault_proxy.py`, a test-only proxy that forwards `/research` to the real researcher and
+  appends two claims labelled "FAULT INJECTION TEST" citing `169.254.169.254` and `localhost`
+  (D21: done at the HTTP boundary, so no production code has a test mode). Run
+  `aba17e42-e213-4020-973e-5fb6cad8df0b`: complete, 9 supported / 1 unsupported / 2 unreachable; the
+  verifier's trace shows both injected URLs rejected with 0 hops. Traces in `traces/a2-fault-unsafe-urls/`.
+- Getting there produced three extra runs, kept in run history with their real status (listed in
+  ORCHESTRATION.md): the student's own services were already on ports 8000–8002, so the first run
+  bypassed the proxy; then the student's researcher and verifier had stopped, giving one
+  researcher-failed and one verifier-failed run. Nothing was deleted.
