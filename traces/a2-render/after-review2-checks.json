@@ -1,0 +1,142 @@
+{
+ "budget_max_steps_1": {
+  "request": {
+   "request_id": "37f8c136-c755-4ca9-b6e6-712320d2310a",
+   "run_id": "23347e07-5abb-40be-9f28-fc0f01200389",
+   "time_budget_ms": 90000,
+   "budget": {
+    "max_steps": 1,
+    "max_fetches": 6,
+    "max_tokens": 40000
+   },
+   "payload": {
+    "claims": [
+     {
+      "claim_id": "a",
+      "text": "example.com is reserved for documentation examples.",
+      "source_url": "https://example.com/"
+     },
+     {
+      "claim_id": "b",
+      "text": "example.org is reserved for documentation examples.",
+      "source_url": "https://example.org/"
+     }
+    ]
+   }
+  },
+  "http_status": 200,
+  "response": {
+   "request_id": "37f8c136-c755-4ca9-b6e6-712320d2310a",
+   "run_id": "23347e07-5abb-40be-9f28-fc0f01200389",
+   "status": "partial",
+   "result": {
+    "verdicts": [
+     {
+      "claim_id": "a",
+      "verdict": "unsupported",
+      "evidence": null
+     }
+    ]
+   },
+   "usage": {
+    "steps": 1,
+    "fetches": 2,
+    "tokens": 361,
+    "searches": 0
+   },
+   "error": {
+    "code": "budget_exhausted",
+    "message": "stopped after 1 of 2 claims: step budget used up (1 model calls)",
+    "retryable": false
+   }
+  }
+ },
+ "handcheck_claim3_recheck": {
+  "request": {
+   "request_id": "cae6fd37-c3c3-40ff-b8c5-d7c219f64b60",
+   "run_id": "57fdca7b-5513-4ee9-9424-c4a8826c2879",
+   "time_budget_ms": 90000,
+   "budget": {
+    "max_steps": 3,
+    "max_fetches": 6,
+    "max_tokens": 60000
+   },
+   "payload": {
+    "claims": [
+     {
+      "claim_id": "liquid-ai/lfm3/release#1",
+      "text": "Liquid AI announced LFM3-1.7B as an open-weight model focused on local agents and tool calling.",
+      "source_url": "https://tech-insider.org/au/how-to-use-hugging-face-2026"
+     }
+    ]
+   }
+  },
+  "http_status": 200,
+  "response": {
+   "request_id": "cae6fd37-c3c3-40ff-b8c5-d7c219f64b60",
+   "run_id": "57fdca7b-5513-4ee9-9424-c4a8826c2879",
+   "status": "complete",
+   "result": {
+    "verdicts": [
+     {
+      "claim_id": "liquid-ai/lfm3/release#1",
+      "verdict": "unreachable",
+      "evidence": null
+     }
+    ]
+   },
+   "usage": {
+    "steps": 0,
+    "fetches": 1,
+    "tokens": 0,
+    "searches": 0
+   },
+   "error": null
+  }
+ },
+ "trace_endpoint_logged": 3,
+ "handcheck_claim3_recheck_local_verifier": {
+  "note": "same claim, new verifier code, run on the laptop (Render gets HTTP 403 from this site)",
+  "request": {
+   "request_id": "a597e56d-514c-44ba-83a6-0ebb731d7511",
+   "run_id": "560dff9d-470e-479d-b988-9d8aaad67d78",
+   "time_budget_ms": 90000,
+   "budget": {
+    "max_steps": 3,
+    "max_fetches": 6,
+    "max_tokens": 60000
+   },
+   "payload": {
+    "claims": [
+     {
+      "claim_id": "liquid-ai/lfm3/release#1",
+      "text": "Liquid AI announced LFM3-1.7B as an open-weight model focused on local agents and tool calling.",
+      "source_url": "https://tech-insider.org/au/how-to-use-hugging-face-2026"
+     }
+    ]
+   }
+  },
+  "http_status": 200,
+  "response": {
+   "request_id": "a597e56d-514c-44ba-83a6-0ebb731d7511",
+   "run_id": "560dff9d-470e-479d-b988-9d8aaad67d78",
+   "status": "complete",
+   "result": {
+    "verdicts": [
+     {
+      "claim_id": "liquid-ai/lfm3/release#1",
+      "verdict": "supported",
+      "evidence": "Liquid AI announced LFM3-1.7B on October 27, 2026, as an open-weight model aimed at local agents, tool calling and structured outputs."
+     }
+    ]
+   },
+   "usage": {
+    "steps": 1,
+    "fetches": 2,
+    "tokens": 3778,
+    "searches": 0
+   },
+   "error": null
+  }
+ }
+}

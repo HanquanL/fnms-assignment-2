@@ -486,5 +486,13 @@ from 18 claims on one day and are not a statistically strong estimate of either 
 now addressed: for pages longer than the window, the verifier sends the model the page's start plus the
 lines that share the most words with the claims, instead of only the first 15,000 characters. Checked
 offline on claim #3's real page (42,915 characters): the supporting sentence at character 18,675 was
-outside the old window and is inside the new selection. The verdict numbers above were measured with
-the old behaviour and are kept as measured; the over-strictness of #1 and #2 is not addressed.
+outside the old window and is inside the new selection. Re-run live with the new code and the real
+model (laptop, one call): claim #3 is now **supported**, with the code-checked excerpt "Liquid AI
+announced LFM3-1.7B on October 27, 2026, as an open-weight model aimed at local agents, tool calling
+and structured outputs." The verdict numbers above were measured with the old behaviour and are kept as
+measured; the over-strictness of #1 and #2 is not addressed.
+
+The same claim sent to the **Render** verifier came back `unreachable`: the site answered Render's
+data-centre address with HTTP 403, while it serves my laptop. "Unreachable" therefore depends on
+*where* the verifier runs, not only on the URL: a researcher on a home connection can cite pages a
+cloud-hosted verifier is blocked from. Records: [traces/a2-render/after-review2-checks.json](traces/a2-render/after-review2-checks.json).

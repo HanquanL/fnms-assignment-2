@@ -176,3 +176,9 @@ All five recommendations were taken. Each has offline tests; none needed a paid 
   Runs 1–3, the hand-check and the Render run were measured before this change and are not re-labelled.
 - **Not done here:** Render runs the verifier from GitHub, so these changes reach it only after a push
   and a manual redeploy.
+- **Render redeployed with `8da627a`** (manual deploy, 2026-11-07 23:39 UTC). Live checks against it:
+  test table 16/16 ([traces/a2-render/matrix-verifier-after-review2.json](traces/a2-render/matrix-verifier-after-review2.json));
+  `max_steps=1` → 1 step, `partial`, `budget_exhausted`; `GET /trace` requests now appear in Render's
+  own log. Hand-check claim #3 sent to Render: `unreachable` (the site returns HTTP 403 to Render's
+  address). Same claim through the new code on the laptop with the real model: `supported`, with the
+  correct, code-checked excerpt. All in [traces/a2-render/after-review2-checks.json](traces/a2-render/after-review2-checks.json).
