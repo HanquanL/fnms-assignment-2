@@ -123,12 +123,12 @@ reproduced with fakes (no paid calls) before fixing, and each fix has regression
   connection string and the JWT secret in the public repository, which the review correctly says
   doesn't meet §14. Now: `backend/.env` is git-ignored and untracked (`git rm --cached`; the local file
   stays), `backend/.env.example` has placeholders, and the README says to copy it. The JWT secret was
-  rotated locally (existing logins must sign in again). **The student decided not to reset the Neon
-  password (2026-11-07).** Known residual risk, accepted: the current Neon connection string is still in
-  the git history of both public repositories (`fnms-assignment-1b`, `fnms-assignment-2`) and still
-  works, so anyone who reads that history can read and write the tracker database. Untracking the file
-  stops publishing it in new commits; only a password reset would make the old copies useless. The
-  history is not rewritten. Trade-off: a grader now needs a `DATABASE_URL` to run the backend (shared
+  rotated locally (existing logins must sign in again). The student first decided not to reset the Neon
+  password. **Later on 2026-11-07 the Neon password changed** (Neon started refusing the old one; the
+  student put the new connection string in the local `backend/.env`). So the connection string in the
+  git history of both public repositories no longer works; the new one exists only in the git-ignored
+  local file. Verified after the change: direct connection, `api_check` 68/68, `tracker_api_check`
+  65/65, and a complete orchestrated run saved to Neon. The history is not rewritten. Trade-off: a grader now needs a `DATABASE_URL` to run the backend (shared
   privately, or their own Neon database: `create_all` builds the tables on first start).
 - **Render redeployed with the fixes** (manual deploy of `f616273`, 2026-11-07 23:11 UTC; a service built
   from a public Git URL does not auto-deploy on push). Live test table against it: 16/16
