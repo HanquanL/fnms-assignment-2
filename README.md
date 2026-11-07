@@ -344,8 +344,8 @@ config.yaml (policy, read-only)        A1 backend (memory)                      
 Secrets live only in git-ignored files and in Render's environment settings. The repository root `.env`
 holds the model/search keys and service tokens; `backend/.env` holds the database connection string and
 the JWT secret. Neither is committed; `.env.example` and `backend/.env.example` list every variable with a
-placeholder. (Until 2026-11-07 `backend/.env` was committed; those credentials were rotated, see
-DECISIONS.md D25.) `frontend/.env` is committed: it only holds the public API URL.
+placeholder. (Until 2026-11-07 `backend/.env` was committed, so the database connection string is still
+in the git history; it was not rotated, see DECISIONS.md D25.) `frontend/.env` is committed: it only holds the public API URL.
 
 **`.env` (repository root, not committed)**
 
