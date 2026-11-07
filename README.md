@@ -18,7 +18,7 @@ The tracker is now a team of three **separate processes that talk only over HTTP
 |---|---|---|---|---|
 | **Orchestrator** = the A1 backend | 8000 | `backend/app/orchestrator/` | researcher, verifier, Neon (the **only** process with DB access) | `backend/.env` (DB, JWT) + `RESEARCHER_TOKEN`, `VERIFIER_TOKEN` (+ URLs) |
 | **Researcher** = the A1B tracker loop behind `POST /research` | 8001 | `researcher/`, `tracker/` | Gemini, Tavily, web pages | `RESEARCHER_TOKEN`, `GEMINI_API_KEY`, `TAVILY_API_KEY` |
-| **Verifier**, `POST /verify` | 8002 (local) | `verifier/` | Gemini, web pages | `VERIFIER_TOKEN`, `GEMINI_API_KEY` |
+| **Verifier**, `POST /verify` | Render: `https://fnms-verifier.onrender.com` (or 8002 locally) | `verifier/` | Gemini, web pages | `VERIFIER_TOKEN`, `GEMINI_API_KEY` |
 
 `shared/` is the one shared schema file (wire contract) plus stateless helpers; no service imports
 another service's package. The orchestrator is plain code (no LLM).
@@ -86,26 +86,30 @@ failed**, and — when the researcher failed — last run's top K under a **stal
 | `orchestrator.*` | Worker URLs, connect timeout, slack, cold-start allowance, retry policy, pre-warm |
 | `limits` | Still used by the A1B single-agent CLI (`python -m tracker run`), kept as the baseline for comparison |
 
-### Optional: deploying the verifier on Render (not done)
+### The verifier on Render (free tier)
 
-All three services run locally in this submission (see DECISIONS.md C8; the PDF asks for the verifier
-on Render). If it is deployed later, Render builds from a Git repository, so first push this project
-to its own repository (`fnms-assignment-2`), then in the Render dashboard (needs **your** account):
+Deployed at **https://fnms-verifier.onrender.com** (`GET /healthz` → `{"status":"ok"}`, no token).
+The orchestrator uses it when the root `.env` has
+`VERIFIER_URL=https://fnms-verifier.onrender.com`; without that line it uses a local verifier on 8002.
+A free instance sleeps after 15 idle minutes, and the first request afterwards waits for it to wake.
 
-1. **New → Blueprint**, pick that repository; Render reads
-   [`render.yaml`](render.yaml) (service `fnms-verifier`, free plan, `uvicorn verifier.app:app`,
-   health check `/healthz`). Or **New → Web Service** with: build `pip install -r verifier/requirements.txt`,
-   start `uvicorn verifier.app:app --host 0.0.0.0 --port $PORT`, env `PYTHON_VERSION=3.11.9`.
+How it was set up (Render dashboard, your account), so it can be recreated:
+
+1. **New → Web Service → Public Git Repository** `https://github.com/HanquanL/fnms-assignment-2`,
+   branch `main`. Build `pip install -r verifier/requirements.txt`, start
+   `uvicorn verifier.app:app --host 0.0.0.0 --port $PORT`, plan **Free**, health check path `/healthz`,
+   env `PYTHON_VERSION=3.11.9` and `VERIFIER_TRACE_STDOUT=1`. ([`render.yaml`](render.yaml) records
+   the same settings, for a Blueprint if a Git provider is connected.)
 2. In the service's **Environment**, set `VERIFIER_TOKEN` (the same value as in your local `.env`) and
    `GEMINI_API_KEY`. They live only in Render, never in the repo.
-3. When it is live, check `https://<service>.onrender.com/healthz` → `{"status":"ok"}`.
-4. Put `VERIFIER_URL=https://<service>.onrender.com` in the root `.env` and restart the backend.
-5. Test it (uses ~4 model calls): `backend\.venv\Scripts\python.exe tests\worker_matrix.py verifier --url https://<service>.onrender.com`
+3. When it is live, check `https://fnms-verifier.onrender.com/healthz` → `{"status":"ok"}`.
+4. Put `VERIFIER_URL=https://fnms-verifier.onrender.com` in the root `.env` and restart the backend.
+5. Test it (uses ~4 model calls): `backend\.venv\Scripts\python.exe tests\worker_matrix.py verifier --url https://fnms-verifier.onrender.com`
 6. **Cold start:** leave it idle for > 15 minutes, run the same command; the first `/healthz` latency
    in the output (and in `traces/matrix-verifier-*.json`) is the wake-up cost. Then do the graded run
-   and collect all three logs: `backend\.venv\Scripts\python.exe tests\extract_run.py <run_id> a2-run1-render --verifier-url https://<service>.onrender.com`
-   (the verifier's log is downloaded from its token-protected `GET /trace`). Update the cold-start
-   lines in ORCHESTRATION.md §2.
+   and collect all three logs: `backend\.venv\Scripts\python.exe tests\extract_run.py <run_id> a2-render-run --verifier-url https://fnms-verifier.onrender.com`
+   (the verifier's log is downloaded from its token-protected `GET /trace`, before the instance
+   sleeps again: a restart empties that file).
 
 ### Tests
 
@@ -153,8 +157,8 @@ Traces: each service appends to `traces/<service>.jsonl` (git-ignored); the grad
   (`tracker_articles`), because that isn't part of the wire contract.
 - Run progress (the "stage" the button shows) lives in the backend's memory; restarting the backend
   mid-run loses that run.
-- Everything runs locally; the verifier is not deployed on Render (DECISIONS.md C8), so no cold start
-  was measured.
+- Only the verifier is on Render; the researcher and orchestrator run locally. Render's free instance
+  spins down after 15 idle minutes, which also empties its in-memory idempotency records.
 
 ## Tech stack
 

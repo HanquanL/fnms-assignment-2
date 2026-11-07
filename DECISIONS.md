@@ -31,7 +31,7 @@ login path) was left untouched and is not part of the A2 commits. A2 work happen
 | C5 | §3 "Successful result body: `{"developments": [...]}`" plus suggested `status`/`usage`/`error` | p.3–4: table column is "result out"; p.4 "On partial or failed, `error` says why"; 500 → `status: failed, retryable: false` | The response envelope is `{request_id, run_id, status, result, usage, error}`; `result` holds exactly the PDF's "result out" object. The field names `status`, `error.code/message/retryable` come from the PDF; `usage` and the `result` wrapper are my choice (the PDF asks workers to report usage but doesn't name the field). |
 | C6 | §4.3 keep `max_searches` | p.3 envelope budget has exactly `max_steps`, `max_fetches`, `max_tokens` | The wire budget keeps exactly the PDF's three keys. Search calls are capped by the researcher's own policy (`researcher.max_searches` in `config.yaml`), and reported in `usage.searches` for cost accounting. |
 | C7 | §1 repository is `fnms-assignment-1b` | — | The student decided (2026-11-04) the A2 project is `fnms-assignment-2` and **nothing goes to `fnms-assignment-1b`**. Before that instruction I had pushed branch `a2-orchestration` there (commits `7a0a722`, `496ca88`); see "Live runs" below. The local `origin` still points at the 1B repository (re-pointing it was blocked by a permission check), so nothing more is pushed from this checkout until the student sets the remote. |
-| C8 | §2/§8 Phase 5: deploy the verifier to Render's free tier | p.2 "Deploy your verifier on Render's free tier"; §7 asks to discuss Render spin-down in Q3 | **The student decided to run all three services locally.** This departs from the PDF: the deployed-verifier and cold-start parts are not done, and the grader may take points off. `render.yaml` and the README steps are kept in case the decision changes; ORCHESTRATION.md answers Q2/Q3 for the local setup and says plainly that no Render cold start was measured. |
+| C8 | §2/§8 Phase 5: deploy the verifier to Render's free tier | p.2 "Deploy your verifier on Render's free tier" | 2026-11-04 the student first chose to run everything locally; on **2026-11-07 the verifier was deployed to Render's free tier** as the PDF asks: `https://fnms-verifier.onrender.com`, built from the public repository `HanquanL/fnms-assignment-2`, branch `main`. The orchestrator and researcher still run locally (allowed by the PDF). Runs 1–3 and the 2026-11-04 fault runs used a local verifier and are kept as measured; the Render run is reported separately in ORCHESTRATION.md. |
 
 ## Design decisions
 
@@ -62,8 +62,8 @@ login path) was left untouched and is not part of the A2 commits. A2 work happen
 
 - Done live, local verifier: worker test matrix for both workers (16/16 verifier, 13/13 researcher), runs 1–3 complete, one verifier-down and one researcher-down fault-injection run. Every number in ORCHESTRATION.md comes from these traces.
 - Branch `a2-orchestration` was pushed to `origin` = `fnms-assignment-1b` (commits `7a0a722`, `496ca88`) to let Render build it. The student then said nothing should go to `fnms-assignment-1b`; no further pushes were made. Whether to delete that remote branch is the student's call. `main` was never touched; nothing was force-pushed.
-- **Not done, by the student's decision: Render deployment.** Everything runs locally (C8).
-- **Not visually checked: the React page.** It lints and builds (`npm run build`), and the API it reads is covered by `tests/orchestrator_check.py`, but the built-in browser can't open the local dev server, so no one has looked at it yet.
+- **Not done on 2026-11-04: Render deployment** (done on 2026-11-07, see below and C8).
+- **Not visually checked on 2026-11-04: the React page** (the student checked it on 2026-11-07, see below). It lints and builds (`npm run build`), and the API it reads is covered by `tests/orchestrator_check.py`, but the built-in browser can't open the local dev server, so no one has looked at it yet.
 
 ## 2026-11-07: unreachable label shown end to end
 
@@ -77,3 +77,24 @@ login path) was left untouched and is not part of the A2 commits. A2 work happen
   ORCHESTRATION.md): the student's own services were already on ports 8000–8002, so the first run
   bypassed the proxy; then the student's researcher and verifier had stopped, giving one
   researcher-failed and one verifier-failed run. Nothing was deleted.
+
+## 2026-11-07: verifier on Render
+
+- **Deployment.** Render web service `fnms-verifier`, free plan ($0/month; Render pre-selected a $7
+  plan, switched to free), "Public Git Repository" source (no GitHub account linked to Render),
+  branch `main` at `b702751`, build `pip install -r verifier/requirements.txt`, start
+  `uvicorn verifier.app:app --host 0.0.0.0 --port $PORT`, health check `/healthz`, env
+  `PYTHON_VERSION=3.11.9`, `VERIFIER_TRACE_STDOUT=1`. The student signed in and pasted
+  `VERIFIER_TOKEN` and `GEMINI_API_KEY` into Render's Environment page themselves; I checked only that
+  both were filled and that their lengths matched the local `.env`, without reading them.
+- **D22.** The repository root `.env` now sets `VERIFIER_URL=https://fnms-verifier.onrender.com`, so
+  every orchestrated run uses the Render verifier. The URL is not a secret; the file stays git-ignored.
+- **Live test table against Render:** 16/16
+  ([traces/a2-render/matrix-verifier-warm.json](traces/a2-render/matrix-verifier-warm.json)).
+- **D23.** `render.yaml` is kept as documentation of the same settings; the service itself was created
+  in the dashboard (Blueprints need a connected Git provider, which the student didn't want).
+- **UI check.** The student looked at the Tracker page on 2026-11-07 (all four labels, excerpts, the
+  unreachable fault claims, run history) and reported that everything looked right.
+- **D24: database credentials stay public.** `backend/.env` (the Neon connection string) is committed
+  in the public `fnms-assignment-2` repository, as it was in 1B. The student accepted this: it is a
+  throwaway course database. Anyone with the repository can read and write it.

@@ -4,7 +4,7 @@ Three processes talk only over HTTP:
 
 ```
 React Tracker page ──JWT──> orchestrator (backend, :8000) ──Bearer RESEARCHER_TOKEN──> researcher (:8001)  POST /research
-                              │  only process with DB access   ──Bearer VERIFIER_TOKEN───> verifier  (:8002 / Render) POST /verify
+                              │  only process with DB access   ──Bearer VERIFIER_TOKEN───> verifier  (Render) POST /verify
                               └──> Neon Postgres (run history, last top K, per-claim verdicts)
 ```
 
@@ -17,8 +17,11 @@ React Tracker page ──JWT──> orchestrator (backend, :8000) ──Bearer R
 | Orchestrator (plain code, no LLM) | [backend/app/orchestrator/](backend/app/orchestrator/) |
 | Decisions and conflicts with `command.md` | [DECISIONS.md](DECISIONS.md) |
 
-**Where the numbers come from.** Runs made on 2026-11-04 with all three services on my laptop
-(Windows 11), Gemini `gemini-3.5-flash-lite` (free tier) and Tavily (free tier):
+**Where the numbers come from.** Gemini `gemini-3.5-flash-lite` (free tier) and Tavily (free tier)
+throughout. The orchestrator and researcher always run on my laptop (Windows 11). The verifier is
+deployed on **Render's free tier at `https://fnms-verifier.onrender.com`** since 2026-11-07; the
+runs from 2026-11-04 (runs 1–3 and the first two fault runs) were made earlier with the verifier on
+the laptop, and are kept as measured rather than repeated:
 
 | Label | run_id | Traces |
 |---|---|---|
@@ -27,7 +30,8 @@ React Tracker page ──JWT──> orchestrator (backend, :8000) ──Bearer R
 | run 3 | `a1d105c1-963b-49c9-8d60-a485925df107` | [traces/a2-run3/](traces/a2-run3/) |
 | verifier down (fault injection) | `f7395abd-aec3-4655-b338-ae55e43a9e73` | [traces/a2-fault-verifier-down/](traces/a2-fault-verifier-down/) |
 | researcher down (fault injection) | `d4f7aa79-24d1-47b8-bd1c-638123c6bb41` | [traces/a2-fault-researcher-down/](traces/a2-fault-researcher-down/) |
-| unsafe URLs (fault injection, 2026-11-07) | `aba17e42-e213-4020-973e-5fb6cad8df0b` | [traces/a2-fault-unsafe-urls/](traces/a2-fault-unsafe-urls/) |
+| unsafe URLs (fault injection, 2026-11-07, local verifier) | `aba17e42-e213-4020-973e-5fb6cad8df0b` | [traces/a2-fault-unsafe-urls/](traces/a2-fault-unsafe-urls/) |
+| **Render run** (2026-11-07, verifier on Render, started cold) | `1ff2fb57-508e-40bc-b0ae-2c16e1fa3fa1` | [traces/a2-render-run/](traces/a2-render-run/) |
 
 The unsafe-URL run is a real run (real researcher, real verifier, saved to Neon) with one change:
 [tests/fault_proxy.py](tests/fault_proxy.py) sits between the orchestrator and the researcher and
@@ -38,11 +42,10 @@ Three runs on 2026-11-07 that are not used for any number here also sit in run h
 (the proxy could not reach the researcher: researcher failed, stale top K shown) and `4a01a5bc` (the
 verifier was not running: 13 claims unverified). Each was saved honestly with its real status.
 
-> **All three services run locally; the verifier is not deployed on Render.** This was a deliberate
-> decision (DECISIONS.md C8) and departs from the PDF, which asks for the verifier on Render's free
-> tier. Consequently **no Render cold start was measured**; where the questions ask about Render, the
-> answers below say what the design does for it and that the number is missing. Nothing is estimated
-> or invented. The verifier is deployable as-is (`render.yaml`, README) if that decision changes.
+The PDF's test table was also run against the deployed verifier: 16/16
+([traces/a2-render/matrix-verifier-warm.json](traces/a2-render/matrix-verifier-warm.json)). The
+Render run's verifier log was downloaded from the verifier's token-protected `GET /trace` right after
+the run (DECISIONS.md, "2026-11-07: verifier on Render").
 
 ---
 
@@ -146,14 +149,46 @@ Run total: 61.2 s from start to saved (orchestrator `run:finish` line).
 Run 2 for comparison: `POST /research` 73.9 s (15 model calls, 15.6 s pacing, 8 searches incl. one
 retried), `POST /verify` 8.4 s (3 URLs, 3 model calls).
 
+### Every cross-service call in the Render run (verifier on Render, started cold)
+
+Run `1ff2fb57`, 2026-11-07. The verifier had been idle for 19 minutes (last request 21:05:06 UTC, run
+started 21:24:44 UTC), past Render's 15-minute spin-down. Worker URLs on `127.0.0.1` (D18).
+
+| # | Caller → callee | Call | Caller latency | Callee handling | Result |
+|---|---|---|---|---|---|
+| 1 | orchestrator → verifier (Render) | `GET /healthz` (pre-warm, background) | **32,562 ms** | — | 200 ok: the cold wake-up |
+| 2 | orchestrator → researcher (laptop) | `POST /research` | 50,171 ms | 50,171 ms | 200 complete, 5 developments, 8 claims |
+| 3 | orchestrator → verifier (Render) | `POST /verify` | 25,594 ms | 25,377 ms | 200 complete, 8 supported |
+| (4) | orchestrator → Neon | save the run | 1,109 ms | — | ok |
+
+Run total: 77.7 s.
+
+- **Cold start: 32.6 s, measured once.** The same `GET /healthz` takes **0.20 s** when the instance
+  is awake (three curl samples right after the run: 0.201, 0.203, 0.206 s). So waking the free instance
+  cost about 32 s. That is less than the "about a minute" the PDF warns about, and a single sample:
+  Render does not promise a wake-up time.
+- **It cost the run nothing.** The pre-warm ran in the background and finished at 21:25:17.9, while
+  the researcher was still working (it answered at 21:25:35.8). By the time `/verify` was sent, the
+  instance had been awake for 18 s. Without the pre-warm, those 32.6 s would have been added to the
+  `/verify` call.
+- **Network to Render is small.** Caller 25,594 ms against Render's own 25,377 ms for `/verify`: about
+  0.2 s for the round trip to Oregon (TLS, Render's proxy, the network). The time is the verifier's work.
+- **The verifier's time went to a rate limit.** Of Render's 25.4 s: 3 fetches (6 HTTP requests with
+  redirects) 4.4 s, 3 successful model calls 4.6 s, and **one Gemini 429** ("per-minute rate limit")
+  followed by a ~16 s backoff. The researcher had just used the same Gemini key for 12 calls on my
+  laptop; both workers draw on one per-minute quota (D5). Retries handled it; it shows up as latency.
+- **The `127.0.0.1` fix (D18) shows here:** caller and callee latency for `/research` are now equal
+  (50,171 vs 50,171 ms), where run 1 had a ~2 s gap.
+- **Clocks really do disagree.** The verifier logged receiving the pre-warm at 21:25:18.391 on Render's
+  clock; my laptop logged the *answer* at 21:25:17.875. An answer can't arrive before the request, so
+  the two clocks differ by at least half a second. Subtracting timestamps across machines would have
+  given negative or wrong latencies; every number above is from the caller's own monotonic clock.
+
 ### Cold start and timeouts
 
-**Cold start: not measured.** The verifier runs locally, so it never sleeps; run 1's pre-warm
-`GET /healthz` (2,375 ms) is the IPv6-fallback delay above, not a wake-up. The cost the PDF describes
-("about a minute" for a free Render instance) is therefore an assumption in the configuration below,
-not a measurement from these runs. How it would be measured: let the instance idle > 15 minutes, run
-`tests/worker_matrix.py verifier --url https://<service>.onrender.com` (first `/healthz` = cold, later
-ones = warm), then start a run and read the pre-warm and `/verify` lines in `traces/orchestrator.jsonl`.
+**Cold start: 32.6 s measured** (Render run above; one sample after 19 idle minutes; warm 0.2 s).
+In runs 1–3 the verifier was on the laptop and never slept; run 1's 2,375 ms pre-warm there is the
+IPv6-fallback delay, not a wake-up.
 
 How the timeouts are chosen ([settings.py](backend/app/orchestrator/settings.py) `response_timeout`):
 
@@ -169,8 +204,11 @@ researcher: 240 s + 0 s + 20 s = 260 s       verifier: 150 s + 90 s + 20 s = 260
   budget, and the 20 s slack covers the gap between the worker's clock starting (request received)
   and the orchestrator's (request sent).
 - **Plus a cold start**, because a sleeping Render instance only receives the request after it wakes.
-  90 s is "about a minute" (PDF) with margin. It is unmeasured (verifier not on Render), and it is
-  the one number in this section taken from the PDF rather than from my traces.
+  The allowance is 90 s, chosen before deploying from the PDF's "about a minute". Measured: 32.6 s.
+  I kept 90 s rather than shrinking it to fit one sample: the cost of a too-long timeout is only
+  waiting longer for a verifier that is truly down, while a too-short one turns a slow wake-up into a
+  "verifier failed" run, and Render doesn't guarantee the wake time. 90 s is about 2.8× the measured
+  value.
 - **Cold start mostly hidden by a pre-warm**: at the start of each run the orchestrator sends
   `GET /healthz` to the verifier in a background thread (DECISIONS.md D12). The researcher takes
   45–75 s (measured), so a ~1-minute wake-up should overlap almost completely with useful work. The
@@ -259,9 +297,11 @@ above the worker's own budget, this only happens if the worker overruns its dead
 the verifier's *admission control* (model cooldown, busy) deletes the in-flight entry, so the retry
 runs the work: correct, because no work was done.
 
-**What changes if Render restarted the verifier in between.** (Here the verifier is local, so the
-same thing happens if its process is restarted; on Render it would happen after every 15-minute
-idle spin-down.) The registry is a Python dict in the
+**What changes if Render restarted the verifier in between.** This is not hypothetical on the free
+tier: every 15-minute idle spin-down is a restart. Observed on 2026-11-07: after the test table ran
+against Render at 21:05 and the instance then slept, the verifier's own trace file (downloaded with
+`GET /trace` after the Render run) started at 21:25:18 — every line from 21:05 was gone, because the
+file and the process memory, including the idempotency registry, belong to the old instance. The registry is a Python dict in the
 process's memory (PDF allows this; DECISIONS.md D13). A restart — a free instance spinning down after
 15 idle minutes, a redeploy, a crash — empties it. The retry then looks *new*:
 
