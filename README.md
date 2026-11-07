@@ -150,8 +150,10 @@ Traces: each service appends to `traces/<service>.jsonl` (git-ignored); the grad
 
 - Idempotency records are in memory: a Render restart forgets them, so a retry after a restart repeats
   the work (ORCHESTRATION.md Q3).
-- The verifier shows the model only the first 15,000 characters of a page; a claim supported further
-  down is marked unsupported (found in the hand-check, ORCHESTRATION.md Q5).
+- For pages longer than 15,000 characters the verifier shows the model the page's start plus the lines
+  most related to the claims (since 2026-11-07). Before that it showed only the first 15,000
+  characters, so a claim supported further down was marked unsupported (found in the hand-check,
+  ORCHESTRATION.md Q5). The selection is keyword-based and can still miss a paraphrased passage.
 - The researcher has no memory in A2 (it can't see earlier runs); the orchestrator maps near-duplicate
   keys onto known developments instead. A2 runs don't record per-article fetch status
   (`tracker_articles`), because that isn't part of the wire contract.

@@ -22,6 +22,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "backend"))
 os.environ.setdefault("DATABASE_URL", "sqlite://")      # app.db builds an engine at import; never used here
 os.environ.setdefault("JWT_SECRET", "test")
+REQ_TRACE = Path(os.environ.get("TEMP", ".")) / f"fnms-orch-requests-{uuid.uuid4().hex}.jsonl"
+os.environ["ORCHESTRATOR_TRACE_PATH"] = str(REQ_TRACE)   # where the backend's request-logging middleware writes
 
 from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -404,6 +406,55 @@ w = FakeWorkers(lambda env, a: json_resp(ok_research(env, [dev(1)])), lambda env
 r, claims, detail, sleeps, lines = run(world, w, settings(prewarm=True))
 check("GET /healthz sent to the verifier during the run (no auth header)",
       any(h == "verifier.test/healthz" and "authorization" not in hd for h, _, hd in w.sent))
+
+print("\nmax_seconds_per_worker caps each attempt, not just whether to retry (review P2 #4)")
+fake_now = [0.0]
+reads: list[float] = []
+
+
+def slow_refusal(request):
+    reads.append(request.extensions["timeout"]["read"])
+    fake_now[0] += 30.0                       # each attempt "takes" 30 s before failing
+    raise httpx.ConnectError("refused")
+
+
+s100 = settings(max_seconds_per_worker=100)
+wc = WorkerClient(s100, TraceLog("orchestrator", None), transport=httpx.MockTransport(slow_refusal),
+                  sleep=lambda d: fake_now.__setitem__(0, fake_now[0] + d), clock=lambda: fake_now[0])
+res = wc.call(s100.verifier, {"request_id": str(uuid.uuid4()), "run_id": str(uuid.uuid4()), "time_budget_ms": 1,
+                              "budget": {}, "payload": {}}, step=2)
+check("attempt 1 waits at most the 100 s left (not the 260 s response timeout)", reads and reads[0] == 100.0, str(reads))
+check("each later attempt waits at most what is left of the 100 s",
+      len(reads) >= 2 and all(r <= 100.0 - 30.0 * i for i, r in enumerate(reads[1:], start=1)),
+      str(reads))
+check("the call ends within max_seconds_per_worker (+ one attempt's own overrun at most)",
+      not res.answered and fake_now[0] <= 100.0 + 30.0, f"t={fake_now[0]} {res.error}")
+
+print("\nevery request the backend receives is logged (review P2 #2)")
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app as backend_app  # noqa: E402
+
+with TestClient(backend_app, raise_server_exceptions=False) as api:   # login hits an empty test DB -> 500, still logged
+    api.get("/healthz")
+    poll_id = str(uuid.uuid4())
+    api.get(f"/api/tracker/orchestrate/{poll_id}", headers={"Authorization": "Bearer super-secret-jwt-value"})
+    api.post("/api/tracker/orchestrate")
+    api.post("/api/auth/login", json={"username": "nobody", "password": "hunter2-password"})
+req_lines = [json.loads(x) for x in REQ_TRACE.read_text(encoding="utf-8").splitlines()]
+by = {e["endpoint_or_tool"]: e for e in req_lines}
+check("GET /healthz logged (in, 200, latency)", by.get("GET /healthz", {}).get("status") == "200"
+      and by["GET /healthz"]["direction"] == "in" and isinstance(by["GET /healthz"]["latency_ms"], int),
+      str(req_lines)[:300])
+check("progress poll logged with its run_id and the 401",
+      by.get("GET /api/tracker/orchestrate/{run_id}", {}).get("run_id") == poll_id
+      and by["GET /api/tracker/orchestrate/{run_id}"]["status"] == "401", str(req_lines)[:300])
+check("run-start request logged", by.get("POST /api/tracker/orchestrate", {}).get("status") == "401")
+check("login logged", "POST /api/auth/login" in by)
+check("every request line has the 11 required fields", all(all(f in e for f in REQUIRED) for e in req_lines))
+raw = REQ_TRACE.read_text(encoding="utf-8")
+check("no Authorization value, password or body in the request log",
+      "super-secret-jwt-value" not in raw and "hunter2-password" not in raw)
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

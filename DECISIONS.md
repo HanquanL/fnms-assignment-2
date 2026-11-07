@@ -113,7 +113,7 @@ reproduced with fakes (no paid calls) before fixing, and each fix has regression
 - **Finding 2: workers could exceed their budget share** (PDF §8). The verifier counted a step only
   after a successful model response (3 calls with `max_steps=1`); the researcher's final finish call
   ignored `max_steps` (a call with `max_steps=0`) and tokens were checked only after spending them (a
-  call with `max_tokens=1`). Fix, D26: a step and a worst-case token reservation are taken **before every
+  call with `max_tokens=1`). Fix, D26: a step and a token reservation are taken **before every
   model request** — first try, retry, fallback model and the final finish call alike
   (`Budget.reserve_step` in `tracker/budget.py`, `estimate_tokens` in `tracker/agent.py`; the verifier
   already reserved tokens and now also reserves the step first). A failed request still counts as a step.
@@ -138,3 +138,41 @@ reproduced with fakes (no paid calls) before fixing, and each fix has regression
   ([traces/a2-render/budget-max-steps-1.json](traces/a2-render/budget-max-steps-1.json)). Known nit, not
   fixed: the verifier fetches a page before checking whether a model step is left for it, so it can
   spend one fetch it can't use (still within `max_fetches`).
+
+## 2026-11-07: second review (P2 recommendations)
+
+All five recommendations were taken. Each has offline tests; none needed a paid call.
+
+- **D27: token limits are an upper bound, not an estimate.** Before, both workers reserved
+  `characters ÷ 3 + max output`, which is a heuristic (the docs wrongly called it "worst-case"), and a
+  failed call gave back its reservation even when its usage was unknown. Now, before every model request:
+  - *input bound* = UTF-8 bytes of everything sent plus a small per-message overhead
+    (`input_token_bound` in `tracker/agent.py` and `verifier/judge.py`). A byte-fallback tokenizer
+    (SentencePiece, which Gemini uses) never emits more tokens than bytes, so this holds for any language.
+    **Assumption, not a provider guarantee**: Google doesn't document it. It over-reserves 3–4× for English.
+  - *output cap* = `min(max_output_tokens, tokens left − input bound)`, sent to the model as
+    `maxOutputTokens` for that call; no call starts if the cap would be under 256. So input bound + cap
+    never exceeds what is left. Thinking tokens: this model reported 0 in every trace; for a thinking
+    model, whether `maxOutputTokens` bounds them is not verified.
+  - *after the call*: success → the reservation is replaced by the provider's real count. Refused before
+    processing (429, any 4xx) → reservation released. Failed after possibly being processed (timeout,
+    5xx, network, unexpected error) → **the whole reservation stays charged** as unknown usage
+    (`tokens_unknown` in the researcher's stats), so `usage.tokens` can only over-count.
+- **D28: every inbound request is logged** (§13). Backend: middleware writes one line per request
+  (method + route template, status, latency, `run_id` when the route has one) through the same writer
+  the orchestrator uses (`backend/app/orchestrator/tracing.py`). Headers, query strings and bodies are
+  never logged. Workers: `POST /verify|/research` and `GET /healthz` already logged themselves; a new
+  middleware in `shared/workerkit.py` logs everything else (`GET /trace`, unknown paths), so nothing is
+  logged twice.
+- **D29: deadlines checked per attempt.** The researcher's search timeout is recomputed before each
+  retry from the time actually left. The orchestrator's `max_seconds_per_worker` is now an overall limit:
+  each attempt's connect/read timeouts are cut to what is left of it. Residual: httpx's read timeout
+  is per read, so a worker that trickles bytes could still stretch one attempt; our workers answer
+  with one small JSON body.
+- **D30: long pages, relevant passages.** For a page longer than the 15,000-character window the
+  verifier sends the model the first 2,000 characters plus the lines sharing the most claim words (with
+  neighbours), in page order, `[…]` between gaps (`select_passages` in `verifier/judge.py`). The evidence
+  check still runs on the whole fetched page, and a quote stitched across a `[…]` gap fails it (tested).
+  Runs 1–3, the hand-check and the Render run were measured before this change and are not re-labelled.
+- **Not done here:** Render runs the verifier from GitHub, so these changes reach it only after a push
+  and a manual redeploy.

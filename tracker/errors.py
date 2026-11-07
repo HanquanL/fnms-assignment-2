@@ -20,13 +20,19 @@ T = TypeVar("T")
 
 
 class TransientError(Exception):
-    def __init__(self, message: str, retry_after: float | None = None):
+    """maybe_billed: False only when the provider refused the request before processing it (429,
+    4xx); True when it may have been processed and its token use is unknown (timeout, 5xx, network)."""
+    def __init__(self, message: str, retry_after: float | None = None, *, maybe_billed: bool = True):
         super().__init__(message)
         self.retry_after = retry_after
+        self.maybe_billed = maybe_billed
 
 
 class TerminalError(Exception):
     """Stop the run. The message must tell a human what to do about it."""
+    def __init__(self, message: str = "", *, maybe_billed: bool = True):
+        super().__init__(message)
+        self.maybe_billed = maybe_billed
 
 
 class RetriesExhausted(TerminalError):

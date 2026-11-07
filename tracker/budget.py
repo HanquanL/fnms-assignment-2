@@ -32,6 +32,8 @@ class Budget:
     prompt_tokens: int = 0
     output_tokens: int = 0
     thinking_tokens: int = 0
+    pending_tokens: int = 0      # reserved for the request in flight
+    unknown_tokens: int = 0      # reservations kept for failed requests with unknown usage (in `tokens`)
     started: float = field(default_factory=time.monotonic)
 
     @classmethod
@@ -55,21 +57,42 @@ class Budget:
         if self.elapsed() >= self.max_wall_seconds:
             raise BudgetExceeded(f"max_wall_seconds ({self.max_wall_seconds:g}) reached")
 
-    def reserve_step(self, est_tokens: int) -> None:
-        """BEFORE every model request, including retries and the final finish call: one step is
-        taken from the budget (a request that fails still counts as a model call), and the call is
-        refused if its worst-case token use would cross max_total_tokens. Limits are checked before
-        spending, never after."""
+    def reserve_step(self, reserve_tokens: int) -> None:
+        """BEFORE every model request, including retries and the final finish call: take one step
+        (a request that fails still counts as a model call) and RESERVE `reserve_tokens` (the input
+        upper bound plus the output cap). The reservation counts as spent until settle() replaces it
+        with the real usage, release() returns it, or charge_unknown() keeps it."""
         if self.steps >= self.max_steps:
             raise BudgetExceeded(f"max_steps ({self.max_steps}) reached")
-        if self.tokens + est_tokens > self.max_total_tokens:
+        if self.tokens + reserve_tokens > self.max_total_tokens:
             raise BudgetExceeded(f"max_total_tokens ({self.max_total_tokens:,}) would be exceeded: used "
-                                 f"{self.tokens:,}, next call may need up to {est_tokens:,}")
+                                 f"{self.tokens:,}, next call is reserved at {reserve_tokens:,}")
         self.steps += 1
+        self.tokens += reserve_tokens
+        self.pending_tokens = reserve_tokens
+
+    def tokens_left(self) -> int:
+        return max(0, self.max_total_tokens - self.tokens)
+
+    def release(self) -> None:
+        """The provider refused the request before processing it (429, 4xx): no tokens were used."""
+        self.tokens -= self.pending_tokens
+        self.pending_tokens = 0
+
+    def charge_unknown(self) -> None:
+        """The request failed after it may have been processed (timeout, 5xx, network): its usage
+        is unknown, so the whole reservation stays charged."""
+        self.unknown_tokens += self.pending_tokens
+        self.pending_tokens = 0
+
+    def settle(self, usage: Usage) -> None:
+        """After a successful call: replace the reservation with the tokens actually used."""
+        self.tokens -= self.pending_tokens
+        self.pending_tokens = 0
+        self.add_model_call(usage)
 
     def add_model_call(self, usage: Usage) -> None:
-        """After a successful call: record the tokens it actually used. Its step was already
-        taken by reserve_step."""
+        """Record the tokens a call actually used. Its step was already taken by reserve_step."""
         self.prompt_tokens += usage.prompt
         self.output_tokens += usage.output
         self.thinking_tokens += usage.thinking
@@ -96,5 +119,6 @@ class Budget:
             "steps": self.steps, "searches": self.searches, "fetches": self.fetches,
             "tokens_total": self.tokens, "tokens_prompt": self.prompt_tokens,
             "tokens_output": self.output_tokens, "tokens_thinking": self.thinking_tokens,
+            "tokens_unknown": self.unknown_tokens,
             "duration_s": round(self.elapsed(), 1),
         }

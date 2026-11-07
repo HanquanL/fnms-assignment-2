@@ -9,6 +9,7 @@ from app.config import settings
 from app import models  # noqa: F401  (registers the User table on Base.metadata)
 from app.db import Base, engine
 from app.routers import auth, users, tracker
+from app.orchestrator.tracing import install_request_logging
 
 
 
@@ -20,6 +21,10 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="FNMS A1 API", lifespan=lifespan)
+
+# Every request this process receives gets a trace line (PDF §13). Added before CORS so it wraps the
+# CORS middleware too and sees the final status.
+install_request_logging(app)
 
 app.add_middleware(
     CORSMiddleware,

@@ -22,9 +22,10 @@ from typing import Callable
 from shared.workerkit import Cooldown, Job, Reply, response_body
 from verifier.evidence import check_evidence
 from verifier.fetchguard import DeadlineReached, FetchPolicy, HopRefused, fetch_article
-from verifier.judge import ModelTerminal, ModelTransient, estimate_tokens
+from verifier.judge import ModelTerminal, ModelTransient, input_token_bound
 
 MIN_SECONDS_TO_START = 2.0      # don't start a fetch or model call with less time than this left
+MIN_OUTPUT_TOKENS = 256         # don't start a call that could only write fewer tokens than this
 
 
 @dataclass
@@ -75,16 +76,31 @@ def run_verify(job: Job, deps: Deps) -> Reply:
                 raise _Stop("time_budget_exhausted", "time budget ran out before a model call")
             if usage["steps"] >= budget.max_steps:
                 raise _Stop("budget_exhausted", f"step budget used up ({budget.max_steps} model calls)")
-            need = estimate_tokens(payload, text, deps.max_chars_to_model, deps.max_output_tokens)
-            if usage["tokens"] + need > budget.max_tokens:
-                raise _Stop("budget_exhausted", f"token budget would be exceeded ({usage['tokens']:,} used, "
-                                                f"next call may need {need:,} of {budget.max_tokens:,})")
-            usage["steps"] += 1   # reserved BEFORE the request: a failed or retried call is still a call
+            # reserve BEFORE the request: one step, and input upper bound + output cap tokens, where
+            # the cap shrinks so the reservation never exceeds the token budget that is left
+            bound = input_token_bound(payload, text, deps.max_chars_to_model)
+            out_cap = min(deps.max_output_tokens, budget.max_tokens - usage["tokens"] - bound)
+            if out_cap < MIN_OUTPUT_TOKENS:
+                raise _Stop("budget_exhausted", f"token budget would be exceeded ({usage['tokens']:,} of "
+                                                f"{budget.max_tokens:,} used; the next call's input alone may "
+                                                f"need up to {bound:,})")
+            reserved = bound + out_cap
+            usage["steps"] += 1   # a failed or retried call is still a call
+            usage["tokens"] += reserved
             t0 = time.monotonic()
             try:
                 out = deps.judge.judge(payload, text, max_chars=deps.max_chars_to_model,
-                                       timeout=max(1.0, min(deps.model_timeout, left - 1.0)))
-            except ModelTransient as e:
+                                       timeout=max(1.0, min(deps.model_timeout, left - 1.0)), max_output=out_cap)
+            except (ModelTransient, ModelTerminal) as e:
+                if not e.maybe_billed:          # refused before processing: no tokens used
+                    usage["tokens"] -= reserved  # otherwise usage is unknown: the reservation stays charged
+                if isinstance(e, ModelTerminal):
+                    job.trace.log(**ids, step=usage["steps"], direction="out",
+                                  endpoint_or_tool=f"model:{deps.judge.model}", status="failed",
+                                  latency_ms=int((time.monotonic() - t0) * 1000), attempt=attempt, tokens=0,
+                                  detail=str(e))
+                    raise
+
                 job.trace.log(**ids, step=usage["steps"], direction="out",
                               endpoint_or_tool=f"model:{deps.judge.model}", status="retry",
                               latency_ms=int((time.monotonic() - t0) * 1000), attempt=attempt, tokens=0,
@@ -98,13 +114,8 @@ def run_verify(job: Job, deps: Deps) -> Reply:
                     raise _Stop("time_budget_exhausted", "time budget ran out while waiting for the model")
                 deps.sleep(wait)
                 continue
-            except ModelTerminal as e:
-                job.trace.log(**ids, step=usage["steps"], direction="out",
-                              endpoint_or_tool=f"model:{deps.judge.model}", status="failed",
-                              latency_ms=int((time.monotonic() - t0) * 1000), attempt=attempt, tokens=0,
-                              detail=str(e))
-                raise
-            usage["tokens"] += out.tokens
+            # (any other exception propagates with the reservation still charged: usage unknown)
+            usage["tokens"] += out.tokens - reserved   # replace the reservation with the real count
             job.trace.log(**ids, step=usage["steps"], direction="out", endpoint_or_tool=f"model:{deps.judge.model}",
                           status="ok" if out.parsed else "bad_output",
                           latency_ms=int((time.monotonic() - t0) * 1000), attempt=attempt, tokens=out.tokens,

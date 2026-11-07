@@ -222,8 +222,8 @@ print("\nbudget is reserved before every model request (review finding 2)")
 for name, budget, max_calls in (("max_steps=0", {"max_steps": 0, "max_fetches": 8, "max_tokens": 40000}, 0),
                                 ("max_steps=1", {"max_steps": 1, "max_fetches": 8, "max_tokens": 40000}, 1),
                                 ("max_tokens=1", {"max_steps": 10, "max_fetches": 8, "max_tokens": 1}, 0),
-                                ("max_tokens=9000 (below one call's worst case)",
-                                 {"max_steps": 10, "max_fetches": 8, "max_tokens": 9000}, 0)):
+                                ("max_tokens=9000 (a few small calls fit; usage must stay within it)",
+                                 {"max_steps": 10, "max_fetches": 8, "max_tokens": 9000}, 10)):
     llm = FakeLLM(HAPPY)
     client, web, _ = make(llm)
     r = client.post("/research", json=envelope(budget=budget), headers=AUTH)
@@ -231,7 +231,7 @@ for name, budget, max_calls in (("max_steps=0", {"max_steps": 0, "max_fetches": 
     u = out["usage"]
     check(f"{name}: {llm.calls} model call(s) (max {max_calls}), usage within the share",
           llm.calls <= max_calls and u["steps"] <= budget["max_steps"] and u["tokens"] <= budget["max_tokens"]
-          and out["status"] == "partial", f"calls={llm.calls} {r.text[:300]}")
+          and (out["status"] == "partial" or max_calls > 1), f"calls={llm.calls} {r.text[:300]}")
 
 
 class FlakyLLM(FakeLLM):
@@ -259,6 +259,70 @@ r = client.post("/research", json=envelope(budget={"max_steps": 3, "max_fetches"
                 headers=AUTH)
 check("retries can't go past max_steps=3 (3 calls, then stop)",
       llm.calls == 3 and r.json()["usage"]["steps"] == 3, f"calls={llm.calls} {r.text[:300]}")
+
+print("\ntoken reservation: byte upper bound, output cap, unknown usage (review P2 #1)")
+from tracker.agent import input_token_bound  # noqa: E402
+from tracker.budget import Budget  # noqa: E402
+from tracker.llm.base import UserText  # noqa: E402
+cjk = "开源模型发布" * 200
+check("input bound >= UTF-8 bytes of the text (multilingual safe)",
+      input_token_bound("", [UserText(cjk)], []) >= len(cjk.encode("utf-8")))
+
+
+class CapLLM(FakeLLM):
+    def __init__(self, turns):
+        super().__init__(turns)
+        self.caps = []
+        self.call_max_output = None
+
+    def generate(self, system, history, tools):
+        self.caps.append(self.call_max_output)
+        return super().generate(system, history, tools)
+
+
+llm = CapLLM(HAPPY)
+client, web, _ = make(llm)
+r = client.post("/research", json=envelope(budget={"max_steps": 10, "max_fetches": 8, "max_tokens": 14000}),
+                headers=AUTH)
+check("output cap shrinks so input bound + cap fits the tokens left (caps 256..8192, some < 8192)",
+      llm.caps and all(c is not None and 256 <= c <= 8192 for c in llm.caps) and min(llm.caps) < 8192,
+      str(llm.caps))
+b = Budget(5, 1, 1, 1000, 60)
+b.reserve_step(400)
+b.release()
+check("refused request (429/4xx): reservation released", b.tokens == 0 and b.steps == 1)
+b.reserve_step(400)
+b.charge_unknown()
+check("failed after maybe being processed (timeout/5xx): reservation stays charged as unknown",
+      b.tokens == 400 and b.unknown_tokens == 400 and b.steps == 2)
+llm = FlakyLLM(HAPPY, fails=1)   # one 503 (may have been processed) before succeeding
+client, web, _ = make(llm)
+r = client.post("/research", json=envelope(), headers=AUTH)
+check("a 5xx failure's reservation is reported in usage.tokens (unknown usage counted)",
+      r.json()["usage"]["tokens"] > 360, r.text[:300])
+
+print("\nsearch retries get only the time that is left (review P2 #3)")
+
+
+class SlowFailingWeb(FakeWeb):
+    def __init__(self):
+        super().__init__()
+        self.timeouts = []
+
+    def search_raw(self, query, timeout):
+        self.timeouts.append(timeout)
+        if len(self.timeouts) == 1:
+            time.sleep(1.5)                     # a slow first attempt...
+            raise TransientError("Tavily server error (502)")
+        return super().search_raw(query, timeout)
+
+
+web = SlowFailingWeb()
+client, web, _ = make(FakeLLM([turn(("search_web", {"query": "q"})), turn(("finish", GOOD))]), web)
+client.post("/research", json=envelope(time_budget_ms=12000), headers=AUTH)
+check("the retry's timeout is recomputed from the deadline (smaller after a slow failure)",
+      len(web.timeouts) == 2 and web.timeouts[0] <= 11.0 and web.timeouts[1] <= web.timeouts[0] - 1.4,
+      str(web.timeouts))
 
 print("\nthe tracker's real fetch_article honours on_hop (no network needed)")
 policy = FetchPolicy.from_config(load_config()["fetch"])

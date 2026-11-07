@@ -215,7 +215,8 @@ researcher: 240 s + 0 s + 20 s = 260 s       verifier: 150 s + 90 s + 20 s = 260
   `/verify` timeout still allows a full cold start in case the ping fails.
 - **Connect timeout 15 s**, separate from the response timeout, so a dead host fails fast.
 - **Retries are bounded**: 3 attempts, backoff 2 s → 4 s (+ jitter, cap 30 s), Retry-After honoured
-  up to 60 s, and no new attempt after 600 s on one worker. Measured in the verifier-down run: attempts
+  up to 60 s, and at most 600 s on one worker in total: since 2026-11-07 every attempt's timeout is also
+  cut to what is left of those 600 s (DECISIONS.md D29). Measured in the verifier-down run: attempts
   at backoff 2.6 s and 5.1 s, then the orchestrator gave up and saved the report (20.2 s spent on the
   verifier in total).
 
@@ -475,9 +476,15 @@ claims reaching the verifier were pre-filtered. What the second agent bought:
   a researcher fooled by an injected page — in principle. These runs did not contain such a page, so
   that benefit is untested on live data (it is tested with fixtures).
 
-Its measured weaknesses are concrete and fixable: a 15,000-character prompt window (a relevant-window
-search around the claim's key terms, or a bigger window, would have fixed #3) and over-strictness
+Its measured weaknesses are concrete and fixable: a 15,000-character prompt window and over-strictness
 about details the claim doesn't need (#1, #2). With 3 of 3 unsupported verdicts wrong, an
 "unsupported" label from this verifier should currently be read as "not confirmed", not "false".
 For a five-item daily digest, the cost is small enough that I would keep it — but these numbers are
 from 18 claims on one day and are not a statistically strong estimate of either error rate.
+
+**Follow-up (2026-11-07, after these measurements; DECISIONS.md D30).** The prompt-window weakness is
+now addressed: for pages longer than the window, the verifier sends the model the page's start plus the
+lines that share the most words with the claims, instead of only the first 15,000 characters. Checked
+offline on claim #3's real page (42,915 characters): the supporting sentence at character 18,675 was
+outside the old window and is inside the new selection. The verdict numbers above were measured with
+the old behaviour and are kept as measured; the over-strictness of #1 and #2 is not addressed.

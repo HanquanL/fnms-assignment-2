@@ -21,7 +21,8 @@ from datetime import datetime, timezone
 from typing import Callable, Mapping
 
 from tracker.budget import Budget, BudgetExceeded
-from tracker.errors import RetriesExhausted, RetryPolicy, TerminalError, ToolInputError, call_with_retry
+from tracker.errors import (RetriesExhausted, RetryPolicy, TerminalError, ToolInputError, TransientError,
+                            call_with_retry)
 from tracker.fetch import FetchResult
 from tracker.llm.base import LLMClient, ModelTurn, Pacer, ToolCall, ToolResult, ToolResults, ToolSpec, UserText
 from tracker.report import REPORT_SCHEMA, salvage_report, validate_report
@@ -82,24 +83,32 @@ SearchFn = Callable[..., SearchResponse]
 FetchFn = Callable[[str], FetchResult]
 
 
-def estimate_tokens(system: str, history: list, tools: list[ToolSpec], max_output: int) -> int:
-    """Worst-case tokens for the next call, computed BEFORE making it: everything we will send
-    (system prompt, whole history, tool schemas), at ~3 characters per token -- an over-estimate for
-    English and JSON -- plus the most the model may write back (max_output_tokens)."""
+MIN_OUTPUT_TOKENS = 256      # don't start a call that could only write fewer tokens than this
+PER_ITEM_OVERHEAD = 16       # role / turn markers the provider adds around each message
+
+
+def input_token_bound(system: str, history: list, tools: list[ToolSpec]) -> int:
+    """Upper bound on the input tokens of the next call, computed BEFORE making it: the UTF-8 BYTES
+    of everything we send (system prompt, whole history, tool schemas) plus a small per-message
+    overhead. A byte-fallback tokenizer (SentencePiece, which Gemini uses) never produces more tokens
+    than bytes, so this bounds the count for any language or content -- assuming that tokenizer
+    property holds for the provider, which its documentation does not promise. For English it is
+    ~3-4x the real count: deliberately conservative."""
     def size(x) -> int:
         try:
-            return len(json.dumps(x, ensure_ascii=False, default=str))
+            return len(json.dumps(x, ensure_ascii=False, default=str).encode("utf-8"))
         except (TypeError, ValueError):
-            return len(str(x))
-    chars = len(system) + size([t.parameters for t in tools]) + sum(len(t.description) for t in tools)
+            return len(str(x).encode("utf-8"))
+    total = len(system.encode("utf-8")) + size([[t.name, t.description, t.parameters] for t in tools])
     for item in history:
         if isinstance(item, UserText):
-            chars += len(item.text)
+            total += len(item.text.encode("utf-8"))
         elif isinstance(item, ModelTurn):
-            chars += size(item.raw) + len(item.text) + size([c.args for c in item.tool_calls])
+            total += size(item.raw) + len(item.text.encode("utf-8")) + size([c.args for c in item.tool_calls])
         elif isinstance(item, ToolResults):
-            chars += size([r.content for r in item.results])
-    return chars // 3 + max_output
+            total += size([[r.call.name, r.content] for r in item.results])
+        total += PER_ITEM_OVERHEAD
+    return total + PER_ITEM_OVERHEAD
 
 
 def untrusted(text: str, source: str) -> str:
@@ -368,10 +377,27 @@ def run_agent(cfg: Mapping, llm: LLMClient, search: SearchFn, fetch: FetchFn, tr
                     raise BudgetExceeded("time budget: too little time left for another model call")
                 if hasattr(active["llm"], "call_timeout"):
                     active["llm"].call_timeout = max(1.0, left - 1.5)
-            # every attempt -- first try, retry, fallback, final finish -- takes a step and must fit
-            # the token budget BEFORE the request is sent (raises BudgetExceeded otherwise)
-            budget.reserve_step(estimate_tokens(system, history, tools, max_output))
-            return active["llm"].generate(system, history, tools)
+            # Every attempt -- first try, retry, fallback, final finish -- takes a step and reserves
+            # its tokens BEFORE the request is sent: input upper bound + output cap, where the output
+            # cap shrinks so that bound + cap never exceeds what is left of the token budget.
+            bound = input_token_bound(system, history, tools)
+            out_cap = min(max_output, budget.tokens_left() - bound)
+            if out_cap < MIN_OUTPUT_TOKENS:
+                raise BudgetExceeded(f"max_total_tokens ({budget.max_total_tokens:,}): {budget.tokens_left():,} left, "
+                                     f"the next call's input alone may need up to {bound:,}")
+            budget.reserve_step(bound + out_cap)
+            if hasattr(active["llm"], "call_max_output"):
+                active["llm"].call_max_output = out_cap
+            try:
+                turn = active["llm"].generate(system, history, tools)
+            except (TransientError, TerminalError) as e:
+                budget.release() if not getattr(e, "maybe_billed", True) else budget.charge_unknown()
+                raise
+            except Exception:
+                budget.charge_unknown()
+                raise
+            budget.settle(turn.usage)
+            return turn
 
         def with_retries() -> ModelTurn:
             return call_with_retry(attempt, retry, what=f"{active['llm'].provider} model call",
@@ -393,7 +419,6 @@ def run_agent(cfg: Mapping, llm: LLMClient, search: SearchFn, fetch: FetchFn, tr
             trace.log("model", step=budget.steps, model=active["llm"].model, status="error",
                       latency_ms=int((time.monotonic() - t0) * 1000), error=f"{type(e).__name__}: {e}")
             raise
-        budget.add_model_call(turn.usage)
         trace.log("model", step=budget.steps, model=active["llm"].model, status="ok",
                   latency_ms=int((time.monotonic() - t0) * 1000), pacer_wait_ms=int(paced[0] * 1000),
                   tokens=asdict(turn.usage),

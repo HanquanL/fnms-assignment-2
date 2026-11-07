@@ -1,7 +1,7 @@
 import uuid
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -275,7 +275,7 @@ def reset_state(current_user: User = Depends(get_current_user), db: Session = De
 # ---------- Assignment 2: orchestrated runs ----------
 
 @router.post("/orchestrate", response_model=OrchestrateOut, status_code=status.HTTP_202_ACCEPTED)
-def start_orchestrated_run(current_user: User = Depends(get_current_user)):
+def start_orchestrated_run(request: Request, current_user: User = Depends(get_current_user)):
     """Start a researcher + verifier run for the signed-in user. Returns at once; the run's
     results land in run history when it finishes. 409 if this user already has a run going."""
     from app.orchestrator import runner   # imported lazily: the A1 API works without worker settings
@@ -283,6 +283,7 @@ def start_orchestrated_run(current_user: User = Depends(get_current_user)):
         p = runner.start(current_user.id)
     except RuntimeError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    request.state.run_id = p.get("run_id")   # lets the request-logging middleware tag this line
     if p.pop("conflict", False):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A run is already in progress")
     return p

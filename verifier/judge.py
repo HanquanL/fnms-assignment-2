@@ -56,13 +56,18 @@ RESPONSE_SCHEMA = {
 
 
 class ModelTransient(Exception):
-    def __init__(self, message: str, retry_after: float | None = None):
+    """maybe_billed False = refused before processing (429/4xx): no tokens used."""
+    def __init__(self, message: str, retry_after: float | None = None, *, maybe_billed: bool = True):
         super().__init__(message)
         self.retry_after = retry_after
+        self.maybe_billed = maybe_billed
 
 
 class ModelTerminal(Exception):
     """Bad key, daily quota, model missing: retrying won't help."""
+    def __init__(self, message: str = "", *, maybe_billed: bool = True):
+        super().__init__(message)
+        self.maybe_billed = maybe_billed
 
 
 @dataclass
@@ -77,10 +82,65 @@ def _fence(text: str, tag: str) -> str:
     return re.sub(rf"</\s*{tag}", f"</ {tag}", text, flags=re.IGNORECASE)
 
 
+HEAD_CHARS = 2000          # always keep the page's start: title, byline, date
+GAP = "\n[…]\n"            # marks skipped text; an excerpt containing it can't pass the evidence check
+_WORD = re.compile(r"[a-z0-9][a-z0-9.\-]*[a-z0-9]|[0-9]")
+_STOP = {"that", "this", "with", "from", "have", "has", "been", "were", "will", "into", "than", "their", "about",
+         "which", "while", "after", "under", "also", "more", "most", "such", "they", "them", "these", "those"}
+
+
+def _keywords(claims: list[dict]) -> set[str]:
+    words = set()
+    for c in claims:
+        for w in _WORD.findall(c["text"].lower()):
+            if (len(w) >= 4 or any(ch.isdigit() for ch in w)) and w not in _STOP:
+                words.add(w)
+    return words
+
+
+def select_passages(page_text: str, claims: list[dict], max_chars: int) -> str:
+    """What the model sees of the page. Short pages: all of it. Long pages: the first HEAD_CHARS
+    characters, then the lines that share the most words with the claims (each with its neighbours),
+    in page order, until max_chars is used. A2 runs 1-3 sent only the first max_chars characters,
+    which hid a supporting sentence at character 18,685 (ORCHESTRATION.md Q5, claim 3).
+
+    This only chooses what the MODEL reads. The code still checks any quoted evidence against the
+    whole fetched page, and "[…]" markers never appear in it, so a stitched quote can't pass."""
+    if len(page_text) <= max_chars:
+        return page_text
+    head = page_text[:HEAD_CHARS]
+    lines = page_text[HEAD_CHARS:].split("\n")
+    words = _keywords(claims)
+    scored = []
+    for i, line in enumerate(lines):
+        low = line.lower()
+        score = sum(1 for w in words if w in low)
+        if score:
+            scored.append((-score, i))
+    budget = max_chars - len(head) - len(GAP)
+    keep: set[int] = set()
+    used = 0
+    for _, i in sorted(scored):
+        for j in (i - 1, i, i + 1):
+            if 0 <= j < len(lines) and j not in keep:
+                cost = len(lines[j]) + len(GAP)
+                if used + cost > budget:
+                    continue
+                keep.add(j)
+                used += cost
+        if used >= budget:
+            break
+    out, prev = [head], None
+    for j in sorted(keep):
+        out.append(("\n" if prev is not None and j == prev + 1 else GAP) + lines[j])
+        prev = j
+    return "".join(out)[:max_chars]
+
+
 def build_prompt(claims: list[dict], page_text: str, max_chars: int) -> str:
     claims_json = json.dumps([{"claim_id": c["claim_id"], "text": c["text"]} for c in claims], ensure_ascii=False)
     return (f"<claims>\n{_fence(claims_json, 'claims')}\n</claims>\n\n"
-            f"<source>\n{_fence(page_text[:max_chars], 'source')}\n</source>\n\n"
+            f"<source>\n{_fence(select_passages(page_text, claims, max_chars), 'source')}\n</source>\n\n"
             "Return the verdicts as JSON.")
 
 
@@ -105,13 +165,13 @@ def classify(resp: httpx.Response) -> Exception:
                  for v in d.get("violations", [])]
     if code == 429:
         if any("PerDay" in q for q in quota_ids):
-            return ModelTerminal("model daily quota used up")
-        return ModelTransient("model per-minute rate limit (429)", _retry_delay(details))
+            return ModelTerminal("model daily quota used up", maybe_billed=False)
+        return ModelTransient("model per-minute rate limit (429)", _retry_delay(details), maybe_billed=False)
     if code in (500, 502, 503, 504):
         return ModelTransient(f"model server error ({code})")
     if "API_KEY_INVALID" in reasons or code in (401, 403):
-        return ModelTerminal(f"model rejected the API key ({code})")
-    return ModelTerminal(f"model rejected the request ({code} {err.get('status', '')})")
+        return ModelTerminal(f"model rejected the API key ({code})", maybe_billed=False)
+    return ModelTerminal(f"model rejected the request ({code} {err.get('status', '')})", maybe_billed=code >= 500)
 
 
 class GeminiJudge:
@@ -122,14 +182,16 @@ class GeminiJudge:
         self._max_out = max_output_tokens
         self._transport = transport
 
-    def judge(self, claims: list[dict], page_text: str, *, max_chars: int, timeout: float) -> Judgement:
-        """ONE attempt. Raises ModelTransient / ModelTerminal."""
+    def judge(self, claims: list[dict], page_text: str, *, max_chars: int, timeout: float,
+              max_output: int | None = None) -> Judgement:
+        """ONE attempt. Raises ModelTransient / ModelTerminal. max_output caps this call's output
+        (so it can't exceed the token budget that is left)."""
         if not self._key:
             raise ModelTerminal("GEMINI_API_KEY is not set on the verifier")
         body = {
             "systemInstruction": {"parts": [{"text": SYSTEM}]},
             "contents": [{"role": "user", "parts": [{"text": build_prompt(claims, page_text, max_chars)}]}],
-            "generationConfig": {"temperature": 0, "maxOutputTokens": self._max_out,
+            "generationConfig": {"temperature": 0, "maxOutputTokens": min(self._max_out, max_output or self._max_out),
                                  "responseMimeType": "application/json", "responseSchema": RESPONSE_SCHEMA},
         }
         try:
@@ -161,7 +223,9 @@ class GeminiJudge:
             return Judgement([], False, tokens)
 
 
-def estimate_tokens(claims: list[dict], page_text: str, max_chars: int, max_output: int) -> int:
-    """Conservative upper bound used to reserve token budget BEFORE a call (~3 chars per token)."""
-    chars = len(SYSTEM) + len(build_prompt(claims, page_text, max_chars))
-    return chars // 3 + max_output
+def input_token_bound(claims: list[dict], page_text: str, max_chars: int) -> int:
+    """Upper bound on the input tokens of one judge call: the UTF-8 BYTES of the system instruction
+    and the prompt, plus a small overhead. A byte-fallback tokenizer (SentencePiece, which Gemini
+    uses) never emits more tokens than bytes -- an assumption about the provider, not a documented
+    guarantee. Conservative: ~3-4x the real count for English."""
+    return len(SYSTEM.encode("utf-8")) + len(build_prompt(claims, page_text, max_chars).encode("utf-8")) + 64

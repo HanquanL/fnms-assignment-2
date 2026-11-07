@@ -11,7 +11,7 @@ from app.db import SessionLocal
 from app.orchestrator.service import Orchestrator
 from app.orchestrator.settings import load_settings
 from app.orchestrator.worker_client import WorkerClient
-from shared.tracelog import TraceLog
+from app.orchestrator.tracing import get_trace
 
 _lock = threading.Lock()
 _progress: dict[str, dict] = {}
@@ -24,7 +24,7 @@ def orchestrator() -> Orchestrator:
         s = load_settings()
         if not s.researcher.token or not s.verifier.token:
             raise RuntimeError("RESEARCHER_TOKEN and VERIFIER_TOKEN must be set (repo-root .env or environment)")
-        trace = TraceLog("orchestrator", s.trace_path)
+        trace = get_trace()   # the same writer the request-logging middleware uses
         _orchestrator = Orchestrator(s, SessionLocal, WorkerClient(s, trace), trace)
     return _orchestrator
 

@@ -180,6 +180,26 @@ def create_worker_app(*, service: str, path: str, token: str, payload_model: typ
         headers = {"Retry-After": str(reply.retry_after)} if reply.retry_after is not None else None
         return JSONResponse(reply.body, status_code=reply.status_code, headers=headers)
 
+    @app.middleware("http")
+    async def log_other_requests(request: Request, call_next):
+        """POST <work path> and GET /healthz write their own (richer) lines; every OTHER request --
+        GET /trace, an unknown path, a wrong method -- gets one here, so nothing the worker receives
+        goes unlogged. Headers and bodies are never logged."""
+        own = (request.method, request.url.path) in {("POST", path), ("GET", "/healthz")}
+        t0 = time.monotonic()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            if not own:
+                trace.log(run_id=request.query_params.get("run_id") if request.url.path == "/trace" else None,
+                          request_id=None, step=None, direction="in",
+                          endpoint_or_tool=f"{request.method} {request.url.path}"[:120], status=str(status),
+                          latency_ms=int((time.monotonic() - t0) * 1000), attempt=None, tokens=0,
+                          http_status=status)
+
     @app.get("/healthz")
     def healthz():
         trace.log(run_id=None, request_id=None, step=None, direction="in", endpoint_or_tool="GET /healthz",

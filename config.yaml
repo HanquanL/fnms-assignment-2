@@ -122,5 +122,5 @@ orchestrator:
     base_delay_seconds: 2
     max_delay_seconds: 30
     max_retry_after_seconds: 60  # a worker asking us to wait longer than this = give up
-  max_seconds_per_worker: 600    # no new attempt starts after this much time on one worker
+  max_seconds_per_worker: 600    # overall limit per worker: each attempt's timeout is cut to what is left
   prewarm_verifier: true         # GET /healthz on the verifier while the researcher works

@@ -59,8 +59,9 @@ def _retry_after(resp: httpx.Response) -> float | None:
 
 class WorkerClient:
     def __init__(self, settings: OrchestratorSettings, trace: TraceLog, *,
-                 transport: httpx.BaseTransport | None = None, sleep: Callable[[float], None] = time.sleep):
-        self.s, self.trace, self.transport, self.sleep = settings, trace, transport, sleep
+                 transport: httpx.BaseTransport | None = None, sleep: Callable[[float], None] = time.sleep,
+                 clock: Callable[[], float] = time.monotonic):
+        self.s, self.trace, self.transport, self.sleep, self.clock = settings, trace, transport, sleep, clock
 
     def _client(self, w: WorkerSettings, read_timeout: float) -> httpx.Client:
         c = self.s.connect_timeout_s
@@ -75,23 +76,35 @@ class WorkerClient:
         endpoint = f"POST {w.path}"
         read_timeout = self.s.response_timeout(w)
         policy = self.s.retry
-        started = time.monotonic()
+        started = self.clock()
         last_error = "not attempted"
 
         with self._client(w, read_timeout) as client:
             for attempt in range(1, policy.max_attempts + 1):
-                t0 = time.monotonic()
+                t0 = self.clock()
                 wait: float | None = None
+                # max_seconds_per_worker is an overall deadline for this worker: each attempt gets at
+                # most the time that is left of it, not a fresh full response timeout
+                left = self.s.max_seconds_per_worker - (t0 - started)
+                if left < 1:
+                    self.trace.log(run_id=run_id, request_id=rid, step=step, direction="out", endpoint_or_tool=endpoint,
+                                   status="failed", latency_ms=0, attempt=attempt, tokens=0, worker=w.name,
+                                   detail="no time left of max_seconds_per_worker")
+                    return CallResult(w.name, rid, False, None, None, attempt - 1,
+                                      f"{w.name} did not answer ({last_error}); out of time",
+                                      int((self.clock() - started) * 1000))
+                c = min(self.s.connect_timeout_s, left)
+                attempt_timeout = httpx.Timeout(connect=c, read=min(read_timeout, left), write=c, pool=c)
                 try:
-                    resp = client.post(url, content=body_bytes, headers=headers)
+                    resp = client.post(url, content=body_bytes, headers=headers, timeout=attempt_timeout)
                 except httpx.TimeoutException as e:
-                    last_error = f"{type(e).__name__} after {time.monotonic() - t0:.1f}s"
+                    last_error = f"{type(e).__name__} after {self.clock() - t0:.1f}s"
                     status = "timeout"
                 except httpx.TransportError as e:
                     last_error = f"{type(e).__name__}: connection failed"
                     status = "connect_error"
                 else:
-                    latency = int((time.monotonic() - t0) * 1000)
+                    latency = int((self.clock() - t0) * 1000)
                     try:
                         data = resp.json()
                         data = data if isinstance(data, dict) else None
@@ -108,7 +121,7 @@ class WorkerClient:
                         err = None if resp.status_code == 200 else (
                             f"HTTP {resp.status_code}: " + (_error_field(data, "message") or "no valid error message"))
                         return CallResult(w.name, rid, True, resp.status_code, data, attempt, err,
-                                          int((time.monotonic() - started) * 1000))
+                                          int((self.clock() - started) * 1000))
                     status = f"http_{resp.status_code}"
                     code = _error_field(data, "code")
                     last_error = f"HTTP {resp.status_code}" + (f": {code}" if code else "")
@@ -120,14 +133,14 @@ class WorkerClient:
                                        detail=f"Retry-After {wait:.0f}s exceeds {policy.max_retry_after:.0f}s")
                         return CallResult(w.name, rid, False, resp.status_code, None, attempt,
                                           f"{last_error}; asked to wait {wait:.0f}s, giving up",
-                                          int((time.monotonic() - started) * 1000))
+                                          int((self.clock() - started) * 1000))
 
-                latency = int((time.monotonic() - t0) * 1000)
+                latency = int((self.clock() - t0) * 1000)
                 delay = min(policy.max_delay, policy.base_delay * 2 ** (attempt - 1)) + random.uniform(0, policy.base_delay)
                 if wait is not None:
                     delay = max(delay, wait)       # honour Retry-After
                 out_of_attempts = attempt == policy.max_attempts
-                out_of_time = (time.monotonic() - started) + delay > self.s.max_seconds_per_worker
+                out_of_time = (self.clock() - started) + delay > self.s.max_seconds_per_worker
                 final = out_of_attempts or out_of_time
                 self.trace.log(run_id=run_id, request_id=rid, step=step, direction="out", endpoint_or_tool=endpoint,
                                status="failed" if final else "retry", latency_ms=latency, attempt=attempt, tokens=0,
@@ -137,13 +150,13 @@ class WorkerClient:
                     why = "attempts" if out_of_attempts else "time"
                     return CallResult(w.name, rid, False, None, None, attempt,
                                       f"{w.name} did not answer ({last_error}); gave up after {attempt} attempt(s), "
-                                      f"out of {why}", int((time.monotonic() - started) * 1000))
+                                      f"out of {why}", int((self.clock() - started) * 1000))
                 self.sleep(delay)
         raise AssertionError("unreachable")
 
     def ping(self, w: WorkerSettings, *, run_id: str) -> tuple[bool, int]:
         """GET /healthz (no auth). Used to wake a sleeping Render instance early; never retried."""
-        t0 = time.monotonic()
+        t0 = self.clock()
         try:
             with self._client(w, w.cold_start_s + self.s.slack_s) as client:
                 r = client.get(f"{w.url}/healthz")
@@ -151,7 +164,7 @@ class WorkerClient:
             status = "ok" if ok else f"http_{r.status_code}"
         except (httpx.HTTPError, ValueError) as e:
             ok, status = False, type(e).__name__
-        latency = int((time.monotonic() - t0) * 1000)
+        latency = int((self.clock() - t0) * 1000)
         self.trace.log(run_id=run_id, request_id=None, step=0, direction="out", endpoint_or_tool="GET /healthz",
                        status=status, latency_ms=latency, attempt=1, tokens=0, worker=w.name, purpose="prewarm")
         return ok, latency

@@ -104,7 +104,7 @@ def from_config(cfg: dict, env: dict | None = None) -> OrchestratorSettings:
                             float(r["max_retry_after_seconds"])),
         max_seconds_per_worker=float(o["max_seconds_per_worker"]),
         prewarm_verifier=bool(o.get("prewarm_verifier", True)),
-        trace_path=Path(env.get("ORCHESTRATOR_TRACE_PATH") or ROOT / "traces" / "orchestrator.jsonl"),
+        trace_path=Path(env.get("ORCHESTRATOR_TRACE_PATH") or ROOT / "traces" / "orchestrator.jsonl"),  # see tracing.py
     )
 
 

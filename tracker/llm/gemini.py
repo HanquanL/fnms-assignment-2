@@ -37,23 +37,27 @@ def classify_gemini(resp: httpx.Response) -> Exception:
     quota_ids = [v.get("quotaId", "") for d in details if d.get("@type", "").endswith("QuotaFailure")
                  for v in d.get("violations", [])]
 
+    refused = code < 500   # a 4xx (incl. 429) is a refusal before generation: no tokens used
     if code == 429:
         daily = [q for q in quota_ids if "PerDay" in q]
         if daily:
             return TerminalError(
                 f"Gemini daily quota used up ({daily[0]}). It resets at midnight Pacific time; "
-                f"retrying today won't help.")
+                f"retrying today won't help.", maybe_billed=False)
         which = next((q for q in quota_ids if "PerMinute" in q), "rate limit")
-        return TransientError(f"Gemini per-minute limit (429, {which})", retry_after=_retry_delay(details))
+        return TransientError(f"Gemini per-minute limit (429, {which})", retry_after=_retry_delay(details),
+                              maybe_billed=False)
     if code in (500, 502, 503, 504):
         return TransientError(f"Gemini server error ({code} {status}): {msg}")
     if "API_KEY_INVALID" in reasons or code in (401, 403):
-        return TerminalError(f"Gemini rejected the API key ({code} {status}). Check GEMINI_API_KEY in .env.")
+        return TerminalError(f"Gemini rejected the API key ({code} {status}). Check GEMINI_API_KEY in .env.",
+                             maybe_billed=False)
     if code == 402:
-        return TerminalError(f"Gemini says payment is required (402): {msg}")
+        return TerminalError(f"Gemini says payment is required (402): {msg}", maybe_billed=False)
     if code == 404:
-        return TerminalError(f"Gemini model not found (404): {msg} -- check model.name in config.yaml")
-    return TerminalError(f"Gemini rejected the request ({code} {status}): {msg}")
+        return TerminalError(f"Gemini model not found (404): {msg} -- check model.name in config.yaml",
+                             maybe_billed=False)
+    return TerminalError(f"Gemini rejected the request ({code} {status}): {msg}", maybe_billed=not refused)
 
 
 class GeminiClient:
@@ -67,6 +71,7 @@ class GeminiClient:
         self._timeout = timeout
         self._transport = transport
         self.call_timeout: float | None = None  # set per call by the A2 worker to fit its deadline
+        self.call_max_output: int | None = None  # set per call so output can't exceed the token budget left
 
     @staticmethod
     def _contents(history: list[HistoryItem]) -> list[dict]:
@@ -93,7 +98,8 @@ class GeminiClient:
             "tools": [{"functionDeclarations": [
                 {"name": t.name, "description": t.description, "parameters": t.parameters} for t in tools]}],
             "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
-            "generationConfig": self._gen,
+            "generationConfig": {**self._gen, "maxOutputTokens": min(self._gen["maxOutputTokens"], self.call_max_output)}
+            if self.call_max_output else self._gen,
         }
         url = f"{BASE_URL}/models/{self.model}:generateContent"
         timeout = min(self._timeout, self.call_timeout) if self.call_timeout else self._timeout

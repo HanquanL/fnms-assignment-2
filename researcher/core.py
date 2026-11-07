@@ -128,11 +128,14 @@ def run_research(job: Job, deps: Deps) -> Reply:
         deps.sleep(seconds)
 
     def search(query: str, on_retry=None):
-        left = deadline - time.monotonic()
-        if left < 5:
-            raise ToolInputError("not enough time left to search")
-        return call_with_retry(lambda: deps.search_raw(query, timeout=min(20.0, left - 1)), retry,
-                               what="search_web", on_retry=on_retry, sleep=bounded_sleep)
+        def attempt():
+            # recomputed for EVERY attempt: after a slow failure and a backoff, a retry only gets
+            # the time that is actually left
+            left = deadline - time.monotonic()
+            if left < 5:
+                raise ToolInputError("not enough time left to search")
+            return deps.search_raw(query, timeout=min(20.0, left - 1))
+        return call_with_retry(attempt, retry, what="search_web", on_retry=on_retry, sleep=bounded_sleep)
 
     def fetch(url: str, on_hop=None, deadline=None):
         return deps.fetch_raw(url, on_hop=on_hop, deadline=deadline)

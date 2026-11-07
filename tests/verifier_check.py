@@ -97,9 +97,11 @@ class FakeJudge:
                                                          "evidence": None} for c in claims])
         self.block, self.delay, self.error = block, delay, error
         self.prompts: list[str] = []
+        self.max_outputs: list = []
 
-    def judge(self, claims, page_text, *, max_chars, timeout):
+    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None):
         self.calls += 1
+        self.max_outputs.append(max_output)
         self.prompts.append(build_prompt(claims, page_text, max_chars))
         if self.block is not None:
             self.block.wait(5)
@@ -407,11 +409,11 @@ class FlakyJudge(FakeJudge):
         super().__init__(supported_with("Alibaba released Qwen 4 today"))
         self.fails = fails
 
-    def judge(self, claims, page_text, *, max_chars, timeout):
+    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None):
         if self.calls < self.fails:
             self.calls += 1
             raise ModelTransient("model server error (503)")
-        return super().judge(claims, page_text, max_chars=max_chars, timeout=timeout)
+        return super().judge(claims, page_text, max_chars=max_chars, timeout=timeout, max_output=max_output)
 
 
 for max_steps, fails in ((1, 2), (2, 5), (3, 1)):
@@ -422,6 +424,41 @@ for max_steps, fails in ((1, 2), (2, 5), (3, 1)):
     check(f"max_steps={max_steps}, {fails} transient failure(s): model calls ({judge.calls}) <= max_steps, "
           f"and every call is counted (steps={out['usage']['steps']})",
           judge.calls <= max_steps and out["usage"]["steps"] == judge.calls, r.text[:300])
+
+print("\ntoken reservation: byte upper bound, output cap, unknown usage (review P2 #1)")
+from verifier.judge import input_token_bound  # noqa: E402
+
+cjk_page = "开源模型今天发布。" * 300
+check("input bound >= UTF-8 bytes of the prompt (multilingual safe)",
+      input_token_bound([{"claim_id": "a", "text": "x"}], cjk_page, 15000) >= len(cjk_page.encode("utf-8")))
+client, web, judge, _ = make(FakeJudge(supported_with("Alibaba released Qwen 4 today")))
+r = client.post("/verify", json=envelope([QWEN_CLAIM], budget={"max_steps": 5, "max_fetches": 5, "max_tokens": 3000}),
+                headers=AUTH)
+check("output cap passed to the model shrinks to fit the tokens left (< 2048 with max_tokens=3000)",
+      judge.max_outputs and 256 <= judge.max_outputs[0] < 2048 and r.json()["usage"]["tokens"] <= 3000,
+      f"{judge.max_outputs} {r.text[:200]}")
+
+
+class FailOnce(FakeJudge):
+    def __init__(self, err):
+        super().__init__(supported_with("Alibaba released Qwen 4 today"))
+        self.err = err
+
+    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None):
+        if self.calls == 0:
+            self.calls += 1
+            raise self.err
+        return super().judge(claims, page_text, max_chars=max_chars, timeout=timeout, max_output=max_output)
+
+
+client, web, judge, _ = make(FailOnce(ModelTransient("model per-minute rate limit (429)", 0.0, maybe_billed=False)))
+r = client.post("/verify", json=envelope([QWEN_CLAIM]), headers=AUTH)
+check("429 (refused before processing): reservation released, tokens = the successful call's 1000",
+      r.json()["usage"]["tokens"] == 1000 and r.json()["usage"]["steps"] == 2, r.text[:300])
+client, web, judge, _ = make(FailOnce(ModelTransient("model server error (503)")))
+r = client.post("/verify", json=envelope([QWEN_CLAIM]), headers=AUTH)
+check("503 (may have been processed): the failed call's reservation stays in usage.tokens",
+      r.json()["usage"]["tokens"] > 1000 and r.json()["usage"]["steps"] == 2, r.text[:300])
 
 print("\nmodel failures")
 client, web, judge, _ = make(FakeJudge(error=ModelTerminal("model rejected the API key (400)")))
@@ -442,6 +479,50 @@ check("429 through all attempts -> 200 partial model_unavailable (work already s
 r = client.post("/verify", json=envelope([QWEN_CLAIM]), headers=AUTH)
 check("while the model cools down, a NEW request -> 503 + Retry-After before any work",
       r.status_code == 503 and r.headers.get("retry-after", "").isdigit() and len(web.requests) == 1, r.text)
+
+print("\nlong pages: the model sees the relevant passages, not just the first 15,000 chars (review #5)")
+from verifier.judge import GAP, select_passages  # noqa: E402
+
+filler = "\n".join(f"Paragraph {i} about the weather, sports results and unrelated local news." for i in range(600))
+target = "Liquid AI announced LFM3-1.7B on October 27, 2026, as an open-weight model aimed at local agents."
+long_page = "Tech Insider, November 2026\n" + filler + "\n" + target + "\n" + filler
+claim = [{"claim_id": "c3", "text": "Liquid AI announced LFM3-1.7B as an open-weight model focused on local agents."}]
+shown = select_passages(long_page, claim, 15000)
+check("supporting sentence deep in a long page reaches the model",
+      long_page.index(target) > 15000 and target in shown, f"pos={long_page.index(target)}")
+check("the page start (title/date) is kept", shown.startswith("Tech Insider, November 2026"))
+check("never more than the configured window", len(shown) <= 15000)
+check("short pages are passed whole and unchanged", select_passages("short page", claim, 15000) == "short page")
+check("skipped text is marked", GAP.strip() in shown)
+client, web, judge, _ = make(FakeJudge(lambda cl, t: [{"claim_id": c["claim_id"], "verdict": "supported",
+                                                        "evidence": "October 27, 2026, as an open-weight model" + GAP
+                                                        + "Paragraph 1 about"} for c in cl]))
+web_text = long_page
+
+
+def long_handler(request):
+    return httpx.Response(200, headers={"content-type": "text/plain"}, text=web_text)
+
+
+deps = Deps(judge=judge, policy=FetchPolicy(), resolver=resolver, transport=httpx.MockTransport(long_handler),
+            sleep=lambda s: None)
+client = TestClient(build_app(deps, token=TOKEN, trace=TraceLog("verifier", None)))
+r = client.post("/verify", json=envelope([{**claim[0], "source_url": "http://news.example.org/long"}]), headers=AUTH)
+check("an excerpt stitched across a '[…]' gap is not on the page -> unsupported",
+      r.json()["result"]["verdicts"][0]["verdict"] == "unsupported", r.text[:300])
+
+print("\nrequests outside /verify and /healthz are logged too (review P2 #2)")
+client, web, judge, tpath = make()
+client.get("/trace", params={"run_id": "r-1"}, headers=AUTH)
+client.get("/trace")
+client.get("/not-a-route")
+lines = [json.loads(x) for x in tpath.read_text(encoding="utf-8").splitlines()]
+got = [(e["endpoint_or_tool"], e["status"]) for e in lines]
+check("GET /trace (200 and 401) and an unknown path (404) each get one inbound line",
+      ("GET /trace", "200") in got and ("GET /trace", "401") in got and ("GET /not-a-route", "404") in got
+      and all(e["direction"] == "in" for e in lines), str(got))
+check("... with the run_id asked for, and no token in the file",
+      any(e["run_id"] == "r-1" for e in lines) and TOKEN not in tpath.read_text(encoding="utf-8"))
 
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
