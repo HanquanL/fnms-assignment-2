@@ -1,0 +1,96 @@
+{
+  "worker": "verifier",
+  "url": "https://fnms-verifier.onrender.com",
+  "at": "20261107-231256",
+  "results": [
+    {
+      "check": "GET /healthz without a token -> 200 {status: ok}",
+      "ok": true,
+      "detail": "{\"status\":\"ok\"}",
+      "latency_ms": 280
+    },
+    {
+      "check": "no token -> 401",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"unauthorized\",\"message\":\"missing or wrong service token\",\"retryable\":false}}"
+    },
+    {
+      "check": "wrong token -> 401",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"unauthorized\",\"message\":\"missing or wrong service token\",\"retryable\":false}}"
+    },
+    {
+      "check": "no token + malformed body -> 401 (auth first)",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"unauthorized\",\"message\":\"missing or wrong service token\",\"retryable\":false}}"
+    },
+    {
+      "check": "valid token + malformed JSON -> 400",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"bad_request\",\"message\":\"body is not valid JSON\",\"retryable\":false}}"
+    },
+    {
+      "check": "valid token + body that fails the schema -> 400",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"bad_request\",\"message\":\"claims: Field required; unexpected: Extra inputs are not permitted\",\"retryable\":false}}"
+    },
+    {
+      "check": "first request -> 200",
+      "ok": true,
+      "detail": "{\"request_id\":\"31606d9c-8c08-4232-a922-efea2b6226a0\",\"run_id\":\"65667d13-b395-4eb4-8a58-e367f9132126\",\"status\":\"complete\",\"result\":{\"verdicts\":[{\"claim_id\":\"c1\",\"verdict\":\"supported\",\"evidence\":\"This domain is for use in documentation examples without needing permission.\"}]},\"usage\":{\"steps\":2,\"fetch",
+      "latency_ms": 4514,
+      "status": "complete"
+    },
+    {
+      "check": "same request_id + same body (reordered keys) -> same status and body",
+      "ok": true,
+      "detail": "{\"request_id\":\"31606d9c-8c08-4232-a922-efea2b6226a0\",\"run_id\":\"65667d13-b395-4eb4-8a58-e367f9132126\",\"status\":\"complete\",\"result\":{\"verdicts\":[{\"claim_id\":\"c1\",\"verdict\":\"supported\",\"evidence\":\"This domain is for use in documentation examples without needing permission.\"}]},\"usage\":{\"steps\":2,\"fetch",
+      "latency_ms": 110
+    },
+    {
+      "check": "the replay added no model calls or fetches in the worker's log",
+      "ok": true,
+      "detail": "3 outbound lines before, 3 after",
+      "outbound_before": 3,
+      "outbound_after": 3
+    },
+    {
+      "check": "same request_id + different body (smaller time_budget_ms) -> 409",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"request_id_conflict\",\"message\":\"this request_id was already used with a different body\",\"retryable\":false},\"run_id\":\"65667d13-b395-4eb4-8a58-e367f9132126\",\"request_id\":\"31606d9c-8c08-4232-a922-efea2b6226a0\"}"
+    },
+    {
+      "check": "same request_id while the first is still running -> 503 + Retry-After",
+      "ok": true,
+      "detail": "503 {\"status\":\"failed\",\"error\":{\"code\":\"in_progress\",\"message\":\"this request_id is still being processed\",\"retryable\":true},\"run_id\":\"6e390c7a-139e-4bbe-9972-6fe2bc28f534\",\"request_id\":\"30fe342b-9a85-4c07-8b3f-28e4d090f690\"}",
+      "retry_after": "5"
+    },
+    {
+      "check": "... and the first copy still completes normally",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "claims at 169.254.169.254 / localhost / [::1] -> unreachable",
+      "ok": true,
+      "detail": "{\"request_id\":\"92451bb9-41f9-45c3-9290-c00a3360f805\",\"run_id\":\"e3355fb9-2247-4702-8a34-ad10d90f0ba7\",\"status\":\"complete\",\"result\":{\"verdicts\":[{\"claim_id\":\"meta\",\"verdict\":\"unreachable\",\"evidence\":null},{\"claim_id\":\"local\",\"verdict\":\"unreachable\",\"evidence\":null},{\"claim_id\":\"v6\",\"verdict\":\"unreacha",
+      "latency_ms": 609
+    },
+    {
+      "check": "... with no fetch attempted (usage.fetches == 0)",
+      "ok": true,
+      "detail": "{'steps': 0, 'fetches': 0, 'tokens': 0, 'searches': 0}"
+    },
+    {
+      "check": "... and the worker's log shows 0 hops for them",
+      "ok": true,
+      "detail": "[{\"status\": \"rejected\", \"hops\": 0, \"detail\": \"host '169.254.169.254' resolves to a link-local address (169.254.169.254)\"}, {\"status\": \"rejected\", \"hops\": 0, \"detail\": \"host 'localhost' is not allowed\"}, {\"status\": \"rejected\", \"hops\": 0, \"detail\": \"host '::1' resolves to a loopback address (::1)\"}]"
+    },
+    {
+      "check": "tiny time_budget_ms -> 200 partial, with what it had",
+      "ok": true,
+      "detail": "{\"request_id\":\"cc1415af-5e00-49cf-92fa-a89f7b6cd9ab\",\"run_id\":\"d00018a1-deb9-4c33-a855-098e493abde7\",\"status\":\"partial\",\"result\":{\"verdicts\":[]},\"usage\":{\"steps\":0,\"fetches\":0,\"tokens\":0,\"searches\":0},\"error\":{\"code\":\"time_budget_exhausted\",\"message\":\"stopped after 0 of 1 claims: time budget ran out",
+      "latency_ms": 125
+    }
+  ]
+}

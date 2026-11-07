@@ -1,0 +1,52 @@
+{
+ "request": {
+  "request_id": "b7643d2f-4c5a-4767-bca8-674176dd3b29",
+  "run_id": "9964880f-0f87-46b8-a818-2d6b9a41703c",
+  "time_budget_ms": 60000,
+  "budget": {
+   "max_steps": 1,
+   "max_fetches": 6,
+   "max_tokens": 40000
+  },
+  "payload": {
+   "claims": [
+    {
+     "claim_id": "a",
+     "text": "example.com is reserved for documentation examples.",
+     "source_url": "https://example.com/"
+    },
+    {
+     "claim_id": "b",
+     "text": "example.org is reserved for documentation examples.",
+     "source_url": "https://example.org/"
+    }
+   ]
+  }
+ },
+ "http_status": 200,
+ "response": {
+  "request_id": "b7643d2f-4c5a-4767-bca8-674176dd3b29",
+  "run_id": "9964880f-0f87-46b8-a818-2d6b9a41703c",
+  "status": "partial",
+  "result": {
+   "verdicts": [
+    {
+     "claim_id": "a",
+     "verdict": "supported",
+     "evidence": "This domain is for use in documentation examples without needing permission."
+    }
+   ]
+  },
+  "usage": {
+   "steps": 1,
+   "fetches": 2,
+   "tokens": 371,
+   "searches": 0
+  },
+  "error": {
+   "code": "budget_exhausted",
+   "message": "stopped after 1 of 2 claims: step budget used up (1 model calls)",
+   "retryable": false
+  }
+ }
+}

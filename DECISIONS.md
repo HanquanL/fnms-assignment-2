@@ -130,3 +130,11 @@ reproduced with fakes (no paid calls) before fixing, and each fix has regression
   stops publishing it in new commits; only a password reset would make the old copies useless. The
   history is not rewritten. Trade-off: a grader now needs a `DATABASE_URL` to run the backend (shared
   privately, or their own Neon database: `create_all` builds the tables on first start).
+- **Render redeployed with the fixes** (manual deploy of `f616273`, 2026-11-07 23:11 UTC; a service built
+  from a public Git URL does not auto-deploy on push). Live test table against it: 16/16
+  ([traces/a2-render/matrix-verifier-after-fix.json](traces/a2-render/matrix-verifier-after-fix.json)).
+  Live budget check: two claims on two pages with `max_steps=1` → HTTP 200 `partial`,
+  `budget_exhausted`, usage `{steps: 1, fetches: 2, tokens: 371}`, one verdict
+  ([traces/a2-render/budget-max-steps-1.json](traces/a2-render/budget-max-steps-1.json)). Known nit, not
+  fixed: the verifier fetches a page before checking whether a model step is left for it, so it can
+  spend one fetch it can't use (still within `max_fetches`).
