@@ -166,9 +166,9 @@ All five recommendations were taken. Each has offline tests; none needed a paid 
   logged twice.
 - **D29: deadlines checked per attempt.** The researcher's search timeout is recomputed before each
   retry from the time actually left. The orchestrator's `max_seconds_per_worker` is now an overall limit:
-  each attempt's connect/read timeouts are cut to what is left of it. Residual: httpx's read timeout
-  is per read, so a worker that trickles bytes could still stretch one attempt; our workers answer
-  with one small JSON body.
+  each attempt's connect/read timeouts are cut to what is left of it. (The residual noted here at
+  first — httpx's read timeout is per read, so a trickling worker could stretch an attempt — was fixed
+  after the third review, D31.)
 - **D30: long pages, relevant passages.** For a page longer than the 15,000-character window the
   verifier sends the model the first 2,000 characters plus the lines sharing the most claim words (with
   neighbours), in page order, `[…]` between gaps (`select_passages` in `verifier/judge.py`). The evidence
@@ -182,3 +182,20 @@ All five recommendations were taken. Each has offline tests; none needed a paid 
   own log. Hand-check claim #3 sent to Render: `unreachable` (the site returns HTTP 403 to Render's
   address). Same claim through the new code on the laptop with the real model: `supported`, with the
   correct, code-checked excerpt. All in [traces/a2-render/after-review2-checks.json](traces/a2-render/after-review2-checks.json).
+
+## 2026-11-07: third review (two P2 findings)
+
+Both reproduced first: with the previous code, a worker sending its answer one byte every 0.4 s held
+a call with `max_seconds_per_worker=2` for 8.4 s and the answer was accepted; and a CORS preflight
+(`OPTIONS`) got HTTP 200 with no trace line. Both new tests fail on the old code and pass on the new.
+
+- **D31: strict total deadline per worker call.** Each attempt now runs in a helper thread
+  (`WorkerClient._attempt` in `backend/app/orchestrator/worker_client.py`): connect, headers and the
+  whole body must arrive within the time left of `max_seconds_per_worker`, measured by the caller. Past
+  it the attempt is a timeout (`DeadlineExceeded`, a subclass of httpx's `TimeoutException`, so the
+  normal retry/give-up path applies) and its connection is closed in the background. Answers larger
+  than 2 MB are discarded unread, so they become an invalid body = worker failure. Test: trickling
+  worker, 2 s limit → gives up at 2.0 s, not answered.
+- **D32: the request logger is registered after CORS.** In Starlette the last-registered middleware
+  is the outermost, so the logger now wraps CORS and records the preflights that CORS answers by
+  itself (`backend/app/main.py`). Test: `OPTIONS /api/tracker/runs` preflight → one trace line, 200.

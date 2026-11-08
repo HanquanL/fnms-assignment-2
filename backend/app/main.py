@@ -22,10 +22,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FNMS A1 API", lifespan=lifespan)
 
-# Every request this process receives gets a trace line (PDF §13). Added before CORS so it wraps the
-# CORS middleware too and sees the final status.
-install_request_logging(app)
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,  # explicit list, never "*"
@@ -33,6 +29,11 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+# Every request this process receives gets a trace line (PDF §13). Registered AFTER CORS on purpose:
+# in Starlette the last-registered middleware is the outermost, so the logger wraps CORS and also
+# sees the preflight (OPTIONS) requests that CORS answers by itself.
+install_request_logging(app)
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):

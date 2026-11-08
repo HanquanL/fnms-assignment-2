@@ -430,6 +430,37 @@ check("each later attempt waits at most what is left of the 100 s",
 check("the call ends within max_seconds_per_worker (+ one attempt's own overrun at most)",
       not res.answered and fake_now[0] <= 100.0 + 30.0, f"t={fake_now[0]} {res.error}")
 
+print("\nmax_seconds_per_worker is a strict total deadline, body included (review 3, #1)")
+import time as _time  # noqa: E402
+
+
+class Trickle(httpx.SyncByteStream):
+    """Headers at once, then one byte every 0.4 s: each read is quick, the whole answer is slow."""
+    def __iter__(self):
+        for ch in b'{"status":"complete"}':
+            _time.sleep(0.4)
+            yield bytes([ch])
+
+
+s2 = settings(max_seconds_per_worker=2)
+wc = WorkerClient(s2, TraceLog("orchestrator", None),
+                  transport=httpx.MockTransport(lambda req: httpx.Response(200, stream=Trickle())), sleep=lambda d: None)
+t_start = _time.monotonic()
+res = wc.call(s2.verifier, {"request_id": str(uuid.uuid4()), "run_id": str(uuid.uuid4()), "time_budget_ms": 1,
+                            "budget": {}, "payload": {}}, step=2)
+elapsed = _time.monotonic() - t_start
+check(f"a worker trickling its answer can't hold the call past 2 s (took {elapsed:.2f} s, not answered)",
+      not res.answered and elapsed < 2.6 and "DeadlineExceeded" in (res.error or ""),
+      f"answered={res.answered} elapsed={elapsed:.2f} {res.error}")
+
+big = b'{"status":"complete","pad":"' + b"x" * 2_100_000 + b'"}'
+wc = WorkerClient(S, TraceLog("orchestrator", None),
+                  transport=httpx.MockTransport(lambda req: httpx.Response(200, content=big)), sleep=lambda d: None)
+res = wc.call(S.verifier, {"request_id": str(uuid.uuid4()), "run_id": str(uuid.uuid4()), "time_budget_ms": 1,
+                           "budget": {}, "payload": {}}, step=2)
+check("an answer over 2 MB is not parsed (body treated as invalid -> worker failure downstream)",
+      res.answered and res.body is None, f"{res.answered} {type(res.body)}")
+
 print("\nevery request the backend receives is logged (review P2 #2)")
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -441,6 +472,9 @@ with TestClient(backend_app, raise_server_exceptions=False) as api:   # login hi
     api.get(f"/api/tracker/orchestrate/{poll_id}", headers={"Authorization": "Bearer super-secret-jwt-value"})
     api.post("/api/tracker/orchestrate")
     api.post("/api/auth/login", json={"username": "nobody", "password": "hunter2-password"})
+    pre = api.options("/api/tracker/runs", headers={"Origin": "http://localhost:5173",
+                                                     "Access-Control-Request-Method": "GET",
+                                                     "Access-Control-Request-Headers": "authorization"})
 req_lines = [json.loads(x) for x in REQ_TRACE.read_text(encoding="utf-8").splitlines()]
 by = {e["endpoint_or_tool"]: e for e in req_lines}
 check("GET /healthz logged (in, 200, latency)", by.get("GET /healthz", {}).get("status") == "200"
@@ -451,6 +485,9 @@ check("progress poll logged with its run_id and the 401",
       and by["GET /api/tracker/orchestrate/{run_id}"]["status"] == "401", str(req_lines)[:300])
 check("run-start request logged", by.get("POST /api/tracker/orchestrate", {}).get("status") == "401")
 check("login logged", "POST /api/auth/login" in by)
+check("CORS preflight (OPTIONS, answered by the CORS middleware) is logged too (review 3, #2)",
+      pre.status_code == 200 and by.get("OPTIONS /api/tracker/runs", {}).get("status") == "200",
+      f"{pre.status_code} {[k for k in by if k.startswith('OPTIONS')]}")
 check("every request line has the 11 required fields", all(all(f in e for f in REQUIRED) for e in req_lines))
 raw = REQ_TRACE.read_text(encoding="utf-8")
 check("no Authorization value, password or body in the request log",
