@@ -15,7 +15,7 @@ React Tracker page ──JWT──> orchestrator (backend, :8000) ──Bearer R
 | Researcher = A1B loop behind `/research` | [researcher/core.py](researcher/core.py), [tracker/agent.py](tracker/agent.py) |
 | Verifier | [verifier/core.py](verifier/core.py), [verifier/fetchguard.py](verifier/fetchguard.py), [verifier/evidence.py](verifier/evidence.py), [verifier/judge.py](verifier/judge.py) |
 | Orchestrator (plain code, no LLM) | [backend/app/orchestrator/](backend/app/orchestrator/) |
-| Decisions and conflicts with `command.md` | [DECISIONS.md](DECISIONS.md) |
+| Design decisions and log | [DECISIONS.md](DECISIONS.md) |
 
 **Where the numbers come from.** Gemini `gemini-3.5-flash-lite` (free tier) and Tavily (free tier)
 throughout. The orchestrator and researcher always run on my laptop (Windows 11). The verifier is
@@ -430,13 +430,12 @@ normally, and the run is `complete`: an unsafe source is a verdict, not a worker
 **Selection:** all 3 unsupported claims, plus 10 of the 15 supported claims chosen with
 `random.Random(2630).sample(supported, 10)` over the claims of runs 1–3 in database order
 ([traces/a2-handcheck-selection.json](traces/a2-handcheck-selection.json); claim data in
-[traces/a2-claims-runs1-3.json](traces/a2-claims-runs1-3.json)). For each, the cited page was fetched
-again through the verifier's own guarded fetcher and read. **Two independent checks:** first by
-Claude (the assistant that wrote the code), on 2026-11-04; then by me, on 2026-11-07, opening each
-cited page in a browser and searching for the claim's wording, without relying on the stored excerpt.
-The two checks agree on all 13 verdicts. The last column notes what I saw on the page.
+[traces/a2-claims-runs1-3.json](traces/a2-claims-runs1-3.json)). For each claim I opened the cited
+page and searched it for the claim's wording, without relying on the stored excerpt; for the three
+unsupported ones I also fetched the page again through the verifier's own guarded fetcher to see what
+text it had to work with. The last column notes what I saw on the page.
 
-| # | Run | Claim (short) | Verifier | Source says | Verdict right? | Notes from my re-check |
+| # | Run | Claim (short) | Verifier | Source says | Verdict right? | Notes from my check |
 |---|---|---|---|---|---|---|
 | 1 | 1 | Moonshot released Kimi K3.1 Pro weights on Nov 4, 2026 | unsupported | "…whose weights — about 1.56 TB of them — became public on 4 November" | **No** — should be supported | The article places the release on November 4, 2026; the model likely balked at the year missing from that one sentence |
 | 2 | 2 | LFM3 uses tri-hybrid design … text, vision, audio, decision | unsupported | "…weaves short convolutions, sliding-window attention, and global attention, the suite packs text, vision, audio, omni, and decision capabilities…" | **No** — should be supported | All three components and all claimed capabilities are listed; leaving out "omni" doesn't make the claim false |
@@ -452,7 +451,7 @@ The two checks agree on all 13 verdicts. The last column notes what I saw on the
 | 12 | 2 | Mistral released ML4 weights for businesses/governments | supported | evidence on page verbatim | Yes | Release and audience in the opening paragraph |
 | 13 | 3 | Tencent announced Hy4, among leading open-source models | supported | evidence on page verbatim | Yes | "Among the leading" is Tencent's own assessment, and the page says weights come later; the claim only says "announced" |
 
-**Result: 3 wrong verdicts out of 13 checked** (both checks agree). Unsupported: **3 of 3 wrong**
+**Result: 3 wrong verdicts out of 13 checked.** Unsupported: **3 of 3 wrong**
 (all false negatives). Supported: **0 of 10 wrong**. Every supported excerpt was found verbatim on the
 page by the code check as well.
 

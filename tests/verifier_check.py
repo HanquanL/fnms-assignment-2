@@ -1,5 +1,5 @@
 """
-Offline checks for the verifier worker (PDF p.7 test table, command.md §9). No network, no model:
+Offline checks for the verifier worker (PDF p.7 test table and §9-§11). No network, no model:
 DNS is a fake resolver, web pages come from httpx.MockTransport, the model is a scripted fake.
 Every case counts the requests the fake web saw and the calls the fake model got.
 
