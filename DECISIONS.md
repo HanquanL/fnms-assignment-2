@@ -195,6 +195,12 @@ Five improvements, each with offline tests; none needed a paid call.
   logs, in all three services: query values become `REDACTED` (names kept), `user:password@` is
   removed, the `#fragment` dropped. Before, a cited URL carrying `?token=...` would have been written to
   the verifier's `url` field as-is. Tests in `tests/contract_check.py` (the `url` field and free text).
+- **Render redeployed with `9a30d09`** (manual deploy, 2026-11-15 UTC). Live checks against it:
+  test table 16/16 ([traces/a2-render/matrix-verifier-after-review4.json](traces/a2-render/matrix-verifier-after-review4.json));
+  the same 6 claims as the before/after check, on Render: 6/6 correct (3 true → supported, 3 false
+  variants → unsupported); a claim citing `https://example.com/?token=SECRET-QUERY-VALUE-123&page=2`:
+  Render's own log holds `https://example.com/?token=REDACTED&page=REDACTED` and not the value
+  ([traces/a2-render/after-review4-checks.json](traces/a2-render/after-review4-checks.json)).
 - **Credentials, re-checked.** The JWT secret was rotated and the Neon password changed on 2026-11-07
   (D25), so the old values in the git history no longer work; the current ones exist only in
   git-ignored local files and in Render's settings.

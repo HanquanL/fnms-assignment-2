@@ -1,0 +1,121 @@
+{
+ "six_claims_on_render": {
+  "request": {
+   "request_id": "08f06f06-f836-4a37-95a8-0dbc94583038",
+   "run_id": "de7f3545-e3ef-4b31-8429-87791ffecc6c",
+   "time_budget_ms": 120000,
+   "budget": {
+    "max_steps": 6,
+    "max_fetches": 8,
+    "max_tokens": 80000
+   },
+   "payload": {
+    "claims": [
+     {
+      "claim_id": "c1-true",
+      "text": "Moonshot AI released the weights for its trillion-parameter sparse flagship model Kimi K3.1 Pro on November 4, 2026.",
+      "source_url": "https://www.orcarouter.ai/blog/ripple-65b-vs-kimi-k3-1-pro"
+     },
+     {
+      "claim_id": "c1-false-date",
+      "text": "Moonshot AI released the weights for its trillion-parameter sparse flagship model Kimi K3.1 Pro on November 5, 2026.",
+      "source_url": "https://www.orcarouter.ai/blog/ripple-65b-vs-kimi-k3-1-pro"
+     },
+     {
+      "claim_id": "c2-true",
+      "text": "The suite utilizes a tri-hybrid design incorporating short convolutions, sliding-window attention, and global attention to support text, vision, audio, and decision capabilities.",
+      "source_url": "https://www.channelinsider.com/ai/news-liquid-ai-lfm3-edge-ai-channel-partners"
+     },
+     {
+      "claim_id": "c2-false-extra",
+      "text": "The suite utilizes a tri-hybrid design incorporating short convolutions, sliding-window attention, and global attention to support text, vision, audio, and video-generation capabilities.",
+      "source_url": "https://www.channelinsider.com/ai/news-liquid-ai-lfm3-edge-ai-channel-partners"
+     },
+     {
+      "claim_id": "c9-true",
+      "text": "Liquid AI released its LFM3 lineup featuring six open-weight models anchored by a 1.7-billion-parameter base.",
+      "source_url": "https://www.channelinsider.com/ai/news-liquid-ai-lfm3-edge-ai-channel-partners"
+     },
+     {
+      "claim_id": "c9-false-count",
+      "text": "Liquid AI released its LFM3 lineup featuring eight open-weight models anchored by a 1.7-billion-parameter base.",
+      "source_url": "https://www.channelinsider.com/ai/news-liquid-ai-lfm3-edge-ai-channel-partners"
+     }
+    ]
+   }
+  },
+  "http_status": 200,
+  "response": {
+   "request_id": "08f06f06-f836-4a37-95a8-0dbc94583038",
+   "run_id": "de7f3545-e3ef-4b31-8429-87791ffecc6c",
+   "status": "complete",
+   "result": {
+    "verdicts": [
+     {
+      "claim_id": "c1-true",
+      "verdict": "supported",
+      "evidence": "Kimi K3.1 Pro is Moonshot AI's trillion-parameter sparse flagship, whose API opened on 23 October and whose weights — about 1.56 TB of them — became public on 4 November."
+     },
+     {
+      "claim_id": "c1-false-date",
+      "verdict": "unsupported",
+      "evidence": null
+     },
+     {
+      "claim_id": "c2-true",
+      "verdict": "supported",
+      "evidence": "Built on a “tri-hybrid” design that weaves short convolutions, sliding-window attention, and global attention, the suite packs text, vision, audio, omni, and decision capabilities into roughly 2-billion-parameter footprints."
+     },
+     {
+      "claim_id": "c2-false-extra",
+      "verdict": "unsupported",
+      "evidence": null
+     },
+     {
+      "claim_id": "c9-true",
+      "verdict": "supported",
+      "evidence": "The startup released its LFM3 lineup on Oct. 27, rolling out six open-weight models anchored by a 1.7-billion-parameter base."
+     },
+     {
+      "claim_id": "c9-false-count",
+      "verdict": "unsupported",
+      "evidence": null
+     }
+    ]
+   },
+   "usage": {
+    "steps": 2,
+    "fetches": 3,
+    "tokens": 6480,
+    "searches": 0
+   },
+   "error": null
+  }
+ },
+ "url_redaction_on_render": {
+  "request": {
+   "request_id": "b2f1d64c-64a4-4a68-b9cb-22ffaea1d805",
+   "run_id": "9c8330a2-fd06-45b4-9eea-dee49ee9ad63",
+   "time_budget_ms": 60000,
+   "budget": {
+    "max_steps": 2,
+    "max_fetches": 4,
+    "max_tokens": 40000
+   },
+   "payload": {
+    "claims": [
+     {
+      "claim_id": "q1",
+      "text": "example.com is reserved for documentation examples.",
+      "source_url": "https://example.com/?token=SECRET-QUERY-VALUE-123&page=2"
+     }
+    ]
+   }
+  },
+  "verify_status": 200,
+  "secret_value_in_log": false,
+  "logged_urls": [
+   "https://example.com/?token=REDACTED&page=REDACTED"
+  ]
+ }
+}
