@@ -1,6 +1,8 @@
-# ORCHESTRATION.md — Assignment 2: Agentic Orchestration
+# Assignment 2 — Orchestration report
 
-Three processes talk only over HTTP:
+I kept the orchestration in ordinary Python. The researcher finds claims, the verifier checks them, and the backend coordinates the calls and saves the result. The three services communicate over HTTP; the workers do not share a database.
+
+Here is the setup I tested:
 
 ```
 React Tracker page ──JWT──> orchestrator (backend, :8000) ──Bearer RESEARCHER_TOKEN──> researcher (:8001)  POST /research
@@ -17,11 +19,7 @@ React Tracker page ──JWT──> orchestrator (backend, :8000) ──Bearer R
 | Orchestrator (plain code, no LLM) | [backend/app/orchestrator/](backend/app/orchestrator/) |
 | Design decisions and log | [DECISIONS.md](DECISIONS.md) |
 
-**Where the numbers come from.** Gemini `gemini-3.5-flash-lite` (free tier) and Tavily (free tier)
-throughout. The orchestrator and researcher always run on my laptop (Windows 11). The verifier is
-deployed on **Render's free tier at `https://fnms-verifier.onrender.com`** since 2026-11-07; the
-runs from 2026-11-04 (runs 1–3 and the first two fault runs) were made earlier with the verifier on
-the laptop, and are kept as measured rather than repeated:
+The measurements below came from Gemini `gemini-3.5-flash-lite` and Tavily on their free tiers. I ran the orchestrator and researcher on my Windows 11 laptop. The verifier ran locally for the November 4 experiments, then on **Render's free tier** (`https://fnms-verifier.onrender.com`) starting November 7. I kept the earlier measurements rather than rerunning them and pretending they came from the deployed version:
 
 | Label | run_id | Traces |
 |---|---|---|
@@ -32,7 +30,7 @@ the laptop, and are kept as measured rather than repeated:
 | researcher down (fault injection) | `d4f7aa79-24d1-47b8-bd1c-638123c6bb41` | [traces/a2-fault-researcher-down/](traces/a2-fault-researcher-down/) |
 | unsafe URLs (fault injection, 2026-11-07, local verifier) | `aba17e42-e213-4020-973e-5fb6cad8df0b` | [traces/a2-fault-unsafe-urls/](traces/a2-fault-unsafe-urls/) |
 | **Render run** (2026-11-07, verifier on Render, started cold) | `1ff2fb57-508e-40bc-b0ae-2c16e1fa3fa1` | [traces/a2-render-run/](traces/a2-render-run/) |
-| final end-to-end run (2026-11-15, latest code, verifier on Render) | `7a161759-11d1-40fe-95b6-5bd5c0d39132` | [traces/a2-final-run/](traces/a2-final-run/) |
+| end-to-end run (2026-11-15, verifier on Render `9a30d09`; before evidence-repair changes) | `7a161759-11d1-40fe-95b6-5bd5c0d39132` | [traces/a2-final-run/](traces/a2-final-run/) |
 
 The unsafe-URL run is a real run (real researcher, real verifier, saved to Neon) with one change:
 [tests/fault_proxy.py](tests/fault_proxy.py) sits between the orchestrator and the researcher and
@@ -43,10 +41,7 @@ Three runs on 2026-11-07 that are not used for any number here also sit in run h
 (the proxy could not reach the researcher: researcher failed, stale top K shown) and `4a01a5bc` (the
 verifier was not running: 13 claims unverified). Each was saved honestly with its real status.
 
-The PDF's test table was also run against the deployed verifier: 16/16
-([traces/a2-render/matrix-verifier-warm.json](traces/a2-render/matrix-verifier-warm.json)). The
-Render run's verifier log was downloaded from the verifier's token-protected `GET /trace` right after
-the run (DECISIONS.md, "2026-11-07: verifier on Render").
+I also ran the PDF test matrix against the deployed verifier (16/16 in the recorded run: [matrix-verifier-warm.json](traces/a2-render/matrix-verifier-warm.json)). I downloaded its trace using the authenticated `GET /trace` endpoint shortly after the run. A later deployment of `2d6c0a3` passed the same 16 checks ([matrix-verifier-final.json](traces/a2-render/matrix-verifier-final.json)); that checks the newer verifier, but it is not a new end-to-end orchestrator run.
 
 ---
 
@@ -69,7 +64,7 @@ Response (worker → orchestrator), the same shape for both workers, `WorkerResp
  "error": null}
 ```
 
-**Why each field is on the wire.**
+I used the following fields because the orchestrator has to track work across processes and decide what to do when a worker does not answer:
 
 - `request_id` — the idempotency key. One per *logical* request, reused unchanged by every retry, so
   the worker can tell "a retry of something I already did" from "new work".
@@ -87,31 +82,13 @@ Response (worker → orchestrator), the same shape for both workers, `WorkerResp
 - Response `usage` — what the worker actually spent, so the orchestrator can account for one budget
   per run. `searches` is reported for cost but is not part of the wire budget (DECISIONS.md C6).
 
-All of it is validated strictly in both directions: unknown fields, strings-as-numbers and bad
-status/error pairs are refused (workers answer 400; the orchestrator treats it as a failed worker).
+I validate both sides of the exchange. A worker returns 400 for a bad request; the orchestrator rejects a malformed worker response. This includes unknown fields, numeric fields sent as strings, and inconsistent `status`/`error` pairs.
 
-**What the verifier deliberately does not receive: the researcher's evidence quote** (and, with it,
-the fetched article text, the summaries, and the tool history). The A1B tracker's report has, for
-every claim, a sentence "copied word for word" from the article. It would be tempting to forward it:
-the verifier could then just check that sentence. What would go wrong:
+**I did not send the researcher's evidence quote to the verifier.** The researcher already has a quote from its own article fetch. If I forwarded that quote, the verifier would be checking the researcher's chosen evidence rather than independently checking the source. A misread sentence—or a quote influenced by an injected page—could bias both agents in the same direction.
 
-1. *It would check the researcher's homework with the researcher's answer key.* If the researcher
-   misread the article, or was steered by a prompt-injected page, its quote is exactly the thing in
-   doubt. A verifier that is told "here is the supporting sentence" is anchored on it: the model judges
-   *the quote*, not *the page*, and a quote that matched a page the researcher read (perhaps a
-   different revision, or text fetched through a redirect the verifier would refuse) becomes the
-   verdict.
-2. *Injection would travel.* Anything the researcher copied from a malicious page would arrive inside
-   the verifier's prompt as "evidence", i.e. as trusted context rather than as fenced page text.
-3. *Correlated errors.* The point of a second agent is an independent check. With the same text in
-   front of it, the verifier fails in the same way as the researcher, and the "supported" count
-   measures agreement, not truth.
+The verifier receives only `claim_id`, `text`, and `source_url`. It fetches the page again through its own URL checks and chooses its own excerpt. Code checks that excerpt against the page it actually fetched. This does not make the two agents fully independent: they still use the same model family and may read the same source. It does avoid passing the first agent's proposed answer to the second.
 
-So the verifier gets the claim and the URL only, fetches the page itself through its own guardrails,
-and has to find its own excerpt — which code then checks against the page *it* fetched. The
-orchestrator also does not store the researcher's quote: `tracker_sources.evidence` is `NULL` for A2
-runs and the only evidence shown in the UI is the verifier's (DECISIONS.md D10).
-
+For the same reason I leave `tracker_sources.evidence` as `NULL` in A2 runs. The UI shows the verifier's evidence stored in `tracker_claims` (DECISIONS.md D10).
 ---
 
 ## 2. The network
@@ -187,9 +164,7 @@ Run total: 77.7 s.
 
 ### Cold start and timeouts
 
-**Cold start: 32.6 s measured** (Render run above; one sample after 19 idle minutes; warm 0.2 s).
-In runs 1–3 the verifier was on the laptop and never slept; run 1's 2,375 ms pre-warm there is the
-IPv6-fallback delay, not a wake-up.
+I measured one **32.6-second cold start** on Render after 19 idle minutes; the warm health check took about **0.2 seconds**. One cold start is not enough to estimate a reliable upper bound. The 2,375 ms pre-warm in local run 1 was a different problem: Windows tried IPv6 before connecting to an IPv4-only uvicorn listener.
 
 How the timeouts are chosen ([settings.py](backend/app/orchestrator/settings.py) `response_timeout`):
 
@@ -292,14 +267,14 @@ Because the check-and-register happens under one lock, two copies arriving at th
 both see "new". A request that changes anything — even `time_budget_ms` shrunk by 1 ms — has a
 different digest and gets **409**, never a replay of someone else's answer.
 
-**Honest limits.** (1) If the first copy runs longer than the orchestrator's remaining attempts, the
+**Where this still breaks down.** (1) If the first copy runs longer than the orchestrator's remaining attempts, the
 orchestrator gives up, marks the verifier failed and charges its full share, while the verifier
 finishes and stores an answer nobody collects (wasted, but not duplicated). With the timeout set
 above the worker's own budget, this only happens if the worker overruns its deadline. (2) A 503 from
 the verifier's *admission control* (model cooldown, busy) deletes the in-flight entry, so the retry
 runs the work: correct, because no work was done.
 
-**What changes if Render restarted the verifier in between.** This is not hypothetical on the free
+**What happens after a Render restart?** I saw this problem on the free
 tier: every 15-minute idle spin-down is a restart. Observed on 2026-11-07: after the test table ran
 against Render at 21:05 and the instance then slept, the verifier's own trace file (downloaded with
 `GET /trace` after the Render run) started at 21:25:18 — every line from 21:05 was gone, because the
@@ -316,8 +291,7 @@ process's memory (PDF allows this; DECISIONS.md D13). A restart — a free insta
 - A changed body with a reused id would no longer get 409 (nothing to compare with). The orchestrator
   never reuses ids for different bodies, so this matters only for a buggy or hostile client.
 
-So the guarantee is "at most once per `request_id` *within one verifier process lifetime*", not
-exactly-once across restarts. Making it survive restarts would need the registry in durable storage
+This gives me at-most-once work for a `request_id` **while the process stays alive**. It is not exactly-once execution across restarts. To make the registry survive restarts, I would need durable storage
 (e.g. a small table keyed by `request_id`, written before the work starts) — which the PDF explicitly
 does not require for the verifier.
 
@@ -518,14 +492,9 @@ original false negative under the old instructions this time (here it was judged
 other claims from the same page, in run 1 it was not), and six claims in one run is a small sample, not an
 accuracy estimate. Record: [traces/a2-tests/verifier-instructions-before-after.json](traces/a2-tests/verifier-instructions-before-after.json).
 
-**Follow-up 3 (2026-11-15): a larger test.** [tests/verifier_eval.py](tests/verifier_eval.py) takes
-every distinct claim the orchestrator has saved with a verifier verdict (56 claims from 24 independent
-pages, fault-injection claims excluded) and, for each of the 47 that contain a number, a **false
-variant** with one digit changed (2026 → 2027, 1.7 → 1.8). All 103 go to the verifier, each URL's
-claims in one request so a variant is judged next to its original. What it measures: for the variants
-the truth is known by construction, so "accepted a false claim" is a real error rate; the originals
-were not re-checked by hand for this test, so for them it reports agreement with the earlier verdict,
-not accuracy.
+**November 15 follow-up: a broader verifier check.** I used [tests/verifier_eval.py](tests/verifier_eval.py) to collect 56 distinct claims from 24 pages in earlier runs, excluding fault-injection claims. For 47 claims containing a number, the script changed one digit (for example, 2026 to 2027 or 1.7 to 1.8). That gave me 103 inputs, grouped by URL so the verifier saw each variant alongside its original.
+
+I expected the number-changed variants to be unsupported, but I did not hand-check each one. A changed number can occasionally still be true in context. This is a useful negative regression test, not a definitive false-positive rate. I also did not re-check the 56 original claims for this experiment, so their verdicts show agreement with prior runs rather than independently established accuracy.
 
 | Run (same 103 claims) | False variants wrongly **supported** | Originals supported / unsupported / unreachable |
 |---|---|---|
@@ -534,25 +503,10 @@ not accuracy.
 | Laptop, with the two fixes below | **0 of 46** judged (1 unreachable) | 52 / 3 / 1 |
 | **Render, with the two fixes (`2d6c0a3`, deployed)** | **0 of 46** judged (1 unreachable) | **53 / 2 / 1** |
 
-The verifier logs which claims the code downgrades (and why), which showed the remaining errors
-were not the model's judgement: in all four "unsupported" originals the model had said *supported*
-and the code rejected its excerpt — twice for being over 300 characters, once for straight quotes
-where the page has curly ones, once for a quote stitched from separate sentences. And no false variant
-was ever rescued by the code check: the model itself rejected all 46. Two fixes followed (DECISIONS.md
-D35–D36): the typography folding above, and **one repair call** for exactly the claims whose excerpt the
-code rejected, telling the model why; its new excerpt goes through the same check. On the laptop that
-turned 1 of 3 rejected excerpts into a checked *supported*; on Render (deployed code) 1 of 2 (o35). The
-one that keeps failing (o53) is a claim the model wants to support with a passage over 300 characters
-both times, so it stays unsupported by rule; o42 passed on Render without needing a repair. The
-curly-quote claim passed directly in both runs. The remaining "unsupported" original o13 is a plain
-model error that varies between runs: supported in the first two runs, unsupported in the last two,
-while its page states it. So on this set: no false claim accepted in 184 judgements of false variants
-across four runs, and with the deployed code 2 of 56 originals (4%) left unsupported — o13, whose page
-I checked and which does state the claim, and o53, which I did not check. These are
-still claims from one topic and one model; not a general accuracy figure. Records:
-[traces/a2-tests/](traces/a2-tests/) (`verifier-eval-*.json`).
+The trace logs helped me find why some original claims were still marked `unsupported`. In the first run the model actually proposed `supported` for four of them, but the code rejected the excerpts: two exceeded 300 characters, one used straight quotes where the page used curly quotes, and one joined text from separate sentences. I kept the excerpt check instead of weakening it. I added typography folding and one extra model call to repair rejected excerpts (DECISIONS.md D35–D36). The repaired excerpt must pass the same code check.
 
-The same claim sent to the **Render** verifier came back `unreachable`: the site answered Render's
-data-centre address with HTTP 403, while it serves my laptop. "Unreachable" therefore depends on
-*where* the verifier runs, not only on the URL: a researcher on a home connection can cite pages a
-cloud-hosted verifier is blocked from. Records: [traces/a2-render/after-review2-checks.json](traces/a2-render/after-review2-checks.json).
+These fixes helped, but did not remove every problem. On the laptop, one of three rejected excerpts was repaired; on Render, one of two was repaired (o35). The long excerpt for o53 still failed the 300-character rule, while o42 passed on Render without repair. Claim o13 changed between `supported` and `unsupported` across runs even though I checked its source and found support for it.
+
+Across all four runs, **none of the 184 judged variant instances** was accepted as `supported`. That is 46 checks per run of the same inputs, not 184 independent examples. On the deployed version, 53 of 56 original claims were supported, 2 unsupported (o13 and o53), and 1 unreachable. I checked the source for o13, but not for o53. These results are limited to one topic and one model; I would not use them as a general accuracy estimate. Full records: [traces/a2-tests/](traces/a2-tests/) (`verifier-eval-*.json`).
+
+A separate check also surprised me: a page I could fetch from my laptop returned HTTP 403 to the **Render** verifier. It became `unreachable` in the cloud even though the URL worked locally. That is a deployment limitation, not necessarily an incorrect citation. Records: [traces/a2-render/after-review2-checks.json](traces/a2-render/after-review2-checks.json).

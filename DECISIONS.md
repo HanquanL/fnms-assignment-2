@@ -1,8 +1,6 @@
-# Assignment 2 — design decisions and log
+# Assignment 2 — decisions and debugging notes
 
-My working log for Assignment 2 (agentic orchestration). The instructor's PDF
-(`FNMS Fall 2026 Assignments 2.pdf`) is the source of truth. Each entry says what I decided and why,
-so every part can be defended at the demo.
+I used this file to keep track of decisions that were not obvious from the code, plus the problems I found while testing. The assignment PDF (`FNMS Fall 2026 Assignments 2.pdf`) sets the requirements; these notes explain how I applied them. I kept failed runs and earlier results instead of replacing them with cleaner numbers after each fix.
 
 ## Baseline (before any change), 2026-11-04
 
@@ -18,7 +16,7 @@ so every part can be defended at the demo.
 My unfinished `run-button` work (`tracker/__main__.py`, `tracker/backend.py`: a `TRACKER_TOKEN` login
 path) was kept out of the first A2 commits.
 
-## How I read the PDF where it leaves room
+## Choices the PDF left open
 
 | # | Question | PDF | What I did |
 |---|---|---|---|
@@ -32,20 +30,22 @@ path) was kept out of the first A2 commits.
 
 ## Design decisions
 
-| # | Decision | Why |
+These were the main decisions I made while separating the A1B code into three services. The IDs are used in `ORCHESTRATION.md` and later debugging notes, so I kept them stable.
+
+| # | What I chose | Reason |
 |---|---|---|
-| D1 | Orchestrator is **plain code** inside the existing FastAPI backend (`backend/app/orchestrator/`). No LLM routing. | The flow is fixed (research → verify → report). Nothing in it needs judgment; code is cheaper, testable, and can't be prompt-injected. |
+| D1 | I put the orchestrator in the existing FastAPI backend (`backend/app/orchestrator/`) and wrote the routing in Python, not another LLM. | The order is already known: research, verify, then report. Letting a model decide that order would add cost and another failure mode. |
 | D2 | `shared/` holds the wire contract (Pydantic models, error codes, canonical JSON hash) and two stateless helpers (JSONL trace writer, worker HTTP plumbing: auth, 400 mapping, idempotency registry class). No service imports another service's package. | PDF §2 forbids importing *another service's code to call it*; it allows a shared schema file. The helpers hold no state shared between processes: each process creates its own registry and trace file. Sharing them avoids three copies of the same 400/401/409/503 logic. |
-| D3 | The verifier has its **own copy** of the fetch guardrails (`verifier/fetchguard.py`, from `tracker/urlguard.py` + `tracker/fetch.py` + `tracker/extract.py`), not an import of `tracker/`. | `tracker/` is the researcher's code. The verifier deploys alone to Render and must not depend on it. |
+| D3 | I kept the verifier's URL guardrails in `verifier/fetchguard.py`, based on the existing tracker URL, fetch and extraction code. | The verifier runs separately on Render. Importing `tracker/` would make that deployment depend on the researcher's package. |
 | D4 | Every redirect hop is one fetch. `fetch_article` gained an `on_hop` callback that is called **before** each outgoing request and may refuse it (budget). The researcher's worker budget counts hops, not `fetch_article` calls. | PDF §3: "A fetch is one HTTP request to a web page, redirects included." |
-| D5 | One Gemini key for both workers, called **sequentially** (researcher, then verifier); each worker paces its own model calls. | Free tier; running both at once would contend for the same per-minute quota. |
-| D6 | Verifier: one fetch per **distinct URL** per request (cached within that request only), and one model call per distinct URL that judges all claims citing it. | Cuts fetches and model calls when several claims cite the same article. The cache lives only for one request, so nothing leaks between runs. |
+| D5 | I used one Gemini key and ran research before verification rather than running the model calls concurrently. | Both workers would otherwise compete for the free-tier rate limit. Each worker also paces its own calls. |
+| D6 | I group claims by source URL, fetch each distinct page once per request, and check the claims for that page in one model call. | Several claims often cite the same article. Re-fetching it for each one would waste time and fetch budget. The cache does not persist across requests. |
 | D7 | Verifier model output is JSON (Gemini `responseMimeType: application/json`); code validates every field, ignores claim ids it didn't ask about, downgrades `supported` when the excerpt check fails, and never upgrades. | PDF §9 and §11. |
 | D8 | The researcher worker runs with **no memory** (no DB, no seen-URL list). The orchestrator does key dedupe against known developments and new/still/dropped classification (logic re-implemented in `backend/app/orchestrator/memory.py`). | PDF: only the orchestrator reads or writes state. The A1B tracker's memory came from the database. |
 | D9 | No `ALTER TABLE` on existing tables. New table `tracker_claims` (created by `create_all`) stores each claim, its URL, its verdict and the verifier's evidence. Which worker failed and the stale-fallback run id are stored in the run's existing `stats` JSON and exposed as explicit API fields. | `create_all` creates new tables but never alters existing ones; avoiding a migration on the shared Neon database removes the riskiest step. |
 | D10 | Researcher evidence quotes are **not** on the wire (contract has `claim_id, text, source_url` only). `tracker_sources.evidence` is left `NULL` for A2 runs; the only evidence shown is the verifier's, from `tracker_claims`. | Keeps the researcher's and the verifier's evidence from being confused. |
 | D11 | Runs are started from the web page (`POST /api/tracker/orchestrate`, user JWT) or the CLI (`backend/run_orchestrated.py`, which calls the same endpoint), run in a background thread, and use the orchestrator `run_id` as the `tracker_runs.id`. | One id ties the DB row to all three trace logs. |
-| D12 | At the start of each run the orchestrator sends `GET /healthz` to the verifier in the background, while the researcher works. | Wakes a sleeping Render instance during the ~1–2 minutes the researcher needs, so the cold start mostly overlaps useful work. The real `/verify` timeout still allows for a full cold start in case the wake-up fails. |
+| D12 | I send a background `GET /healthz` to the verifier when the run starts, while the researcher is working. | Render's free instance can be asleep. The pre-warm can overlap the researcher's work, though `/verify` still has its own cold-start allowance if the ping fails. |
 | D13 | Idempotency registry is in memory (per process), keyed by `request_id`, value = SHA-256 of the canonical JSON body (sorted keys, no whitespace) + state (in-flight / done) + stored status code and body. Only final answers (200, 500) are stored; 503s are not. Bounded: oldest finished entries evicted past 1,000 entries. | PDF §7. A Render restart loses it (discussed in ORCHESTRATION.md Q3). |
 | D14 | Worker response envelope: `{request_id, run_id, status, result, usage, error}` (see C5). `usage = {steps, fetches, tokens, searches}`; `searches` is 0 for the verifier. | Same shape for both workers; orchestrator validates it identically. |
 | D15 | Orchestrator charging: valid response → the usage it reports (must be ≤ the share it was given, else invalid); no answer / timeout / malformed / 5xx → the **full share**; 400/401 → 0 (the worker rejects these before doing any work). Each `request_id` charged once regardless of attempts. | PDF §8. |
@@ -55,11 +55,9 @@ path) was kept out of the first A2 commits.
 | D19 | Evidence quotes in the researcher's report are dropped at the wire boundary (`researcher/core.py` `to_wire`). | Contract: the verifier must not see them, and the orchestrator has no use for them (D10). |
 | D20 | For ORCHESTRATION.md Q5 I hand-checked all 13 selected verdicts (every unsupported one plus 10 random supported ones, seed 2630) by opening each cited page and searching it for the claim. My notes are in the table's last column. | The table quotes the page text so each verdict can be re-checked quickly. |
 
-## Live runs (2026-11-04)
+## November 4 — baseline runs
 
-- Worker test matrix for both workers (16/16 verifier, 13/13 researcher), runs 1–3 complete, one
-  verifier-down and one researcher-down fault-injection run, all with the verifier running locally.
-  Every number in ORCHESTRATION.md comes from these traces and the later ones below.
+I first tested both workers locally: 16/16 verifier checks and 13/13 researcher checks. Runs 1–3 completed; I also recorded one verifier-down and one researcher-down run. The measurements in `ORCHESTRATION.md` come from these saved traces and the later tests noted here.
 - Researcher "Test it yourself" results (PDF p.7), 13/13 both times: on 2026-11-04
   ([traces/a2-tests/matrix-researcher-20261104.json](traces/a2-tests/matrix-researcher-20261104.json))
   and again on 2026-11-07 after the review-round fixes
@@ -68,9 +66,9 @@ path) was kept out of the first A2 commits.
 - The React page lints and builds (`npm run build`); the API it reads is covered by
   `tests/orchestrator_check.py`. I checked the page visually on 2026-11-07 (below).
 
-## 2026-11-07: unreachable label shown end to end
+## November 7 — testing an unreachable source
 
-- No real run had produced an `unreachable` claim, so the UI had never shown that label. I added
+I had not yet seen `unreachable` in an ordinary run, so I could not tell whether the UI displayed it correctly. I added
   `tests/fault_proxy.py`, a test-only proxy that forwards `/research` to the real researcher and
   appends two claims labelled "FAULT INJECTION TEST" citing `169.254.169.254` and `localhost`
   (D21: done at the HTTP boundary, so no production code has a test mode). Run
@@ -81,7 +79,7 @@ path) was kept out of the first A2 commits.
   bypassed the proxy; then my researcher and verifier had stopped, giving one researcher-failed and
   one verifier-failed run. Nothing was deleted.
 
-## 2026-11-07: verifier on Render
+## November 7 — deploying the verifier on Render
 
 - **Deployment.** Render web service `fnms-verifier`, free plan ($0/month; Render pre-selected a $7
   plan, which I switched to free), "Public Git Repository" source (no Git provider linked to Render),
@@ -100,10 +98,9 @@ path) was kept out of the first A2 commits.
 - **D24 (reversed the same day by D25, below):** at first `backend/.env` (the Neon connection string)
   stayed committed, as in 1B, since it is a throwaway course database.
 
-## 2026-11-07: fixes after reviewing the pushed code (round 1)
+## November 7 — first code review fixes
 
-Reviewing the pushed repository against the PDF turned up three serious problems. I reproduced all
-three with fakes (no paid calls) before fixing them, and each fix has regression tests.
+The first review turned up three problems that my happy-path tests had missed. I reproduced each one with fakes before changing the implementation, so the regression tests do not need paid model calls.
 
 - **A malformed worker error crashed the run before it was saved.** A worker answering HTTP 500/503
   with `{"error": "bad"}` made `worker_client.py` call `.get()` on a string; the run never reached the
@@ -138,9 +135,9 @@ three with fakes (no paid calls) before fixing them, and each fix has regression
   fixed: the verifier fetches a page before checking whether a model step is left for it, so it can
   spend one fetch it can't use (still within `max_fetches`).
 
-## 2026-11-07: review round 2
+## November 7 — second code review fixes
 
-Five improvements, each with offline tests; none needed a paid call.
+The next pass focused on budget accounting, request logs, deadlines, and the amount of page text shown to the verifier. I added offline tests for the changes.
 
 - **D27: token limits are an upper bound, not an estimate.** Before, both workers reserved
   `characters ÷ 3 + max output`, which is a heuristic, and a failed call gave back its reservation even
@@ -179,7 +176,25 @@ Five improvements, each with offline tests; none needed a paid call.
   address). Same claim through the new code on my laptop with the real model: `supported`, with the
   correct, code-checked excerpt. All in [traces/a2-render/after-review2-checks.json](traces/a2-render/after-review2-checks.json).
 
-## 2026-11-14: verifier strictness, URL redaction in traces
+## November 7 — third code review fixes
+
+I reproduced both problems first: with the previous code, a worker sending its answer one byte every
+0.4 s held a call with `max_seconds_per_worker=2` for 8.4 s and the answer was accepted; and a CORS
+preflight (`OPTIONS`) got HTTP 200 with no trace line. Both new tests fail on the old code and pass on
+the new.
+
+- **D31: strict total deadline per worker call.** Each attempt runs in a helper thread
+  (`WorkerClient._attempt` in `backend/app/orchestrator/worker_client.py`): connect, headers and the
+  whole body must arrive within the time left of `max_seconds_per_worker`, measured by the caller. Past
+  it the attempt is a timeout (`DeadlineExceeded`, a subclass of httpx's `TimeoutException`, so the
+  normal retry/give-up path applies) and its connection is closed in the background. Answers larger
+  than 2 MB are discarded unread, so they become an invalid body = worker failure. Test: trickling
+  worker, 2 s limit → gives up at 2.0 s, not answered.
+- **D32: the request logger is registered after CORS.** In Starlette the last-registered middleware
+  is the outermost, so the logger wraps CORS and records the preflights that CORS answers by itself
+  (`backend/app/main.py`). Test: `OPTIONS /api/tracker/runs` preflight → one trace line, 200.
+
+## November 14 — verifier wording and trace redaction
 
 - **D33: verifier instructions allow a less detailed claim.** The hand-check found 3 of 3
   "unsupported" verdicts wrong; one was the 15,000-character window (D30), the other two were
@@ -205,10 +220,9 @@ Five improvements, each with offline tests; none needed a paid call.
   (D25), so the old values in the git history no longer work; the current ones exist only in
   git-ignored local files and in Render's settings.
 
-## 2026-11-15: final end-to-end run, larger verifier test
+## November 15 — end-to-end check and broader verifier tests
 
-- **Final end-to-end run** with the latest code (backend and researcher on my laptop, verifier on
-  Render `9a30d09`): run `7a161759-11d1-40fe-95b6-5bd5c0d39132`, complete, 4 developments, 4 claims all
+- **End-to-end check before the last verifier fixes.** The backend and researcher ran on my laptop; the verifier was deployed on Render at `9a30d09`. This run finished **before** the later `2d6c0a3` release added typography folding and evidence repair, so it is not an end-to-end test of those fixes. Run `7a161759-11d1-40fe-95b6-5bd5c0d39132`, complete, 4 developments, 4 claims all
   supported with excerpts, saved to Neon, returned by `/runs/latest` and first in run history. The
   verifier's 47 s include one Gemini 429 and its `Retry-After` wait. All three logs in
   [traces/a2-final-run/](traces/a2-final-run/); the orchestrator log now also shows the request-logging
@@ -219,28 +233,7 @@ Five improvements, each with offline tests; none needed a paid call.
   "supported" excerpt (too long / not on the page), the model is asked once more, for those claims only,
   with the reason; the answer goes through the same check and costs a step. Never an upgrade without a
   checked excerpt. The evidence-check log line now records which claim ids were downgraded and why.
-- **D37: larger verifier test** (`tests/verifier_eval.py`): 56 saved claims + 47 one-digit false
-  variants, four runs; no false variant accepted in any run (0/184 judged). With the fixes deployed on
-  Render, 53/56 originals supported, 2 unsupported, 1 unreachable. Details and caveats in
-  ORCHESTRATION.md Q5, follow-up 3.
+- **D37: larger verifier test** (`tests/verifier_eval.py`). I reused 56 saved claims and made 47 number-changed variants, then ran the same set four times. Of the 46 variants actually judged in each run, none was marked `supported`: **0/46 per run, or 0/184 repeated judgments**. That does not mean 184 independent false claims or a measured population false-positive rate. A digit change could accidentally produce another supported fact, and I did not hand-check every variant. On the deployed version, the 56 original claims returned 53 supported, 2 unsupported and 1 unreachable; these are verdict counts, not independently measured accuracy. The details are in `ORCHESTRATION.md` Q5.
 - **Render redeployed with `2d6c0a3`** (manual deploy, 2026-11-15 UTC): test table 16/16
   ([traces/a2-render/matrix-verifier-final.json](traces/a2-render/matrix-verifier-final.json)); larger
   test on Render as above ([traces/a2-tests/verifier-eval-20261115-020529.json](traces/a2-tests/verifier-eval-20261115-020529.json)).
-
-## 2026-11-07: review round 3
-
-I reproduced both problems first: with the previous code, a worker sending its answer one byte every
-0.4 s held a call with `max_seconds_per_worker=2` for 8.4 s and the answer was accepted; and a CORS
-preflight (`OPTIONS`) got HTTP 200 with no trace line. Both new tests fail on the old code and pass on
-the new.
-
-- **D31: strict total deadline per worker call.** Each attempt runs in a helper thread
-  (`WorkerClient._attempt` in `backend/app/orchestrator/worker_client.py`): connect, headers and the
-  whole body must arrive within the time left of `max_seconds_per_worker`, measured by the caller. Past
-  it the attempt is a timeout (`DeadlineExceeded`, a subclass of httpx's `TimeoutException`, so the
-  normal retry/give-up path applies) and its connection is closed in the background. Answers larger
-  than 2 MB are discarded unread, so they become an invalid body = worker failure. Test: trickling
-  worker, 2 s limit → gives up at 2.0 s, not answered.
-- **D32: the request logger is registered after CORS.** In Starlette the last-registered middleware
-  is the outermost, so the logger wraps CORS and records the preflights that CORS answers by itself
-  (`backend/app/main.py`). Test: `OPTIONS /api/tracker/runs` preflight → one trace line, 200.
