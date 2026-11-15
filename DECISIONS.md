@@ -60,6 +60,11 @@ path) was kept out of the first A2 commits.
 - Worker test matrix for both workers (16/16 verifier, 13/13 researcher), runs 1–3 complete, one
   verifier-down and one researcher-down fault-injection run, all with the verifier running locally.
   Every number in ORCHESTRATION.md comes from these traces and the later ones below.
+- Researcher "Test it yourself" results (PDF p.7), 13/13 both times: on 2026-11-04
+  ([traces/a2-tests/matrix-researcher-20261104.json](traces/a2-tests/matrix-researcher-20261104.json))
+  and again on 2026-11-07 after the review-round fixes
+  ([traces/a2-tests/matrix-researcher-20261107.json](traces/a2-tests/matrix-researcher-20261107.json)).
+  The verifier's are in `traces/a2-render/`.
 - The React page lints and builds (`npm run build`); the API it reads is covered by
   `tests/orchestrator_check.py`. I checked the page visually on 2026-11-07 (below).
 

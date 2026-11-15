@@ -1,0 +1,80 @@
+{
+  "worker": "researcher",
+  "url": "http://127.0.0.1:8001",
+  "at": "20261107-233619",
+  "results": [
+    {
+      "check": "GET /healthz without a token -> 200 {status: ok}",
+      "ok": true,
+      "detail": "{\"status\":\"ok\"}",
+      "latency_ms": 0
+    },
+    {
+      "check": "no token -> 401",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"unauthorized\",\"message\":\"missing or wrong service token\",\"retryable\":false}}"
+    },
+    {
+      "check": "wrong token -> 401",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"unauthorized\",\"message\":\"missing or wrong service token\",\"retryable\":false}}"
+    },
+    {
+      "check": "no token + malformed body -> 401 (auth first)",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"unauthorized\",\"message\":\"missing or wrong service token\",\"retryable\":false}}"
+    },
+    {
+      "check": "valid token + malformed JSON -> 400",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"bad_request\",\"message\":\"body is not valid JSON\",\"retryable\":false}}"
+    },
+    {
+      "check": "valid token + body that fails the schema -> 400",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"bad_request\",\"message\":\"topic: Field required; k: Field required; unexpected: Extra inputs are not permitted\",\"retryable\":false}}"
+    },
+    {
+      "check": "first request -> 200",
+      "ok": true,
+      "detail": "{\"request_id\":\"b9b157cc-ab2a-411e-9fdd-8e97c2591663\",\"run_id\":\"fa48d729-41f1-4c18-9cb6-12df8b57d515\",\"status\":\"partial\",\"result\":{\"developments\":[]},\"usage\":{\"steps\":2,\"fetches\":0,\"tokens\":3598,\"searches\":1},\"error\":{\"code\":\"budget_exhausted\",\"message\":\"budget: max_steps (2) reached\",\"retryable\":fal",
+      "latency_ms": 5344,
+      "status": "partial"
+    },
+    {
+      "check": "same request_id + same body (reordered keys) -> same status and body",
+      "ok": true,
+      "detail": "{\"request_id\":\"b9b157cc-ab2a-411e-9fdd-8e97c2591663\",\"run_id\":\"fa48d729-41f1-4c18-9cb6-12df8b57d515\",\"status\":\"partial\",\"result\":{\"developments\":[]},\"usage\":{\"steps\":2,\"fetches\":0,\"tokens\":3598,\"searches\":1},\"error\":{\"code\":\"budget_exhausted\",\"message\":\"budget: max_steps (2) reached\",\"retryable\":fal",
+      "latency_ms": 0
+    },
+    {
+      "check": "the replay added no model calls or fetches in the worker's log",
+      "ok": true,
+      "detail": "4 outbound lines before, 4 after",
+      "outbound_before": 4,
+      "outbound_after": 4
+    },
+    {
+      "check": "same request_id + different body (smaller time_budget_ms) -> 409",
+      "ok": true,
+      "detail": "{\"status\":\"failed\",\"error\":{\"code\":\"request_id_conflict\",\"message\":\"this request_id was already used with a different body\",\"retryable\":false},\"run_id\":\"fa48d729-41f1-4c18-9cb6-12df8b57d515\",\"request_id\":\"b9b157cc-ab2a-411e-9fdd-8e97c2591663\"}"
+    },
+    {
+      "check": "same request_id while the first is still running -> 503 + Retry-After",
+      "ok": true,
+      "detail": "503 {\"status\":\"failed\",\"error\":{\"code\":\"in_progress\",\"message\":\"this request_id is still being processed\",\"retryable\":true},\"run_id\":\"db35a551-bd19-4f2d-b8e4-21b20d756c7a\",\"request_id\":\"7ff93a70-5463-496f-ba70-84e68b9d47ea\"}",
+      "retry_after": "5"
+    },
+    {
+      "check": "... and the first copy still completes normally",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "tiny time_budget_ms -> 200 partial, with what it had",
+      "ok": true,
+      "detail": "{\"request_id\":\"8f23dea0-1cc9-488e-9812-50632e79b7c2\",\"run_id\":\"90041e23-b5d9-4327-be4a-8662982a2eba\",\"status\":\"partial\",\"result\":{\"developments\":[]},\"usage\":{\"steps\":0,\"fetches\":0,\"tokens\":0,\"searches\":0},\"error\":{\"code\":\"time_budget_exhausted\",\"message\":\"budget: time budget would run out while wait",
+      "latency_ms": 15
+    }
+  ]
+}
