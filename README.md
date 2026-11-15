@@ -43,8 +43,8 @@ VERIFIER_TOKEN=<token 2>
 # VERIFIER_URL=http://127.0.0.1:8002   # default; change only if the verifier runs elsewhere
 ```
 
-The orchestrator reads its tokens from the environment / root `.env`, never from `backend/.env`
-(which is committed), and never sends them to the browser.
+The orchestrator reads worker tokens from the environment or the repository-root .env, 
+not from backend/.env. Both .env files are git-ignored.
 
 ### Start the three processes (three terminals, repository root)
 
