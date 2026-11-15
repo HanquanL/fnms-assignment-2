@@ -32,6 +32,7 @@ the laptop, and are kept as measured rather than repeated:
 | researcher down (fault injection) | `d4f7aa79-24d1-47b8-bd1c-638123c6bb41` | [traces/a2-fault-researcher-down/](traces/a2-fault-researcher-down/) |
 | unsafe URLs (fault injection, 2026-11-07, local verifier) | `aba17e42-e213-4020-973e-5fb6cad8df0b` | [traces/a2-fault-unsafe-urls/](traces/a2-fault-unsafe-urls/) |
 | **Render run** (2026-11-07, verifier on Render, started cold) | `1ff2fb57-508e-40bc-b0ae-2c16e1fa3fa1` | [traces/a2-render-run/](traces/a2-render-run/) |
+| final end-to-end run (2026-11-15, latest code, verifier on Render) | `7a161759-11d1-40fe-95b6-5bd5c0d39132` | [traces/a2-final-run/](traces/a2-final-run/) |
 
 The unsafe-URL run is a real run (real researcher, real verifier, saved to Neon) with one change:
 [tests/fault_proxy.py](tests/fault_proxy.py) sits between the orchestrator and the researcher and
@@ -373,7 +374,10 @@ in order, to both strings ([evidence.py](verifier/evidence.py) `normalize`). In 
 *excerpt* is stripped of leading/trailing whitespace after normalizing; (b) an excerpt must be at least
 20 characters after normalizing; (c) "the fetched text" is the text extracted from the HTML (scripts,
 styles, navigation removed by [fetchguard.py](verifier/fetchguard.py) `html_to_text`), not the raw
-bytes. No quote/dash folding (unlike A1B's `tracker/report.py`).
+bytes; (d) since 2026-11-15, a fifth step on both strings after the PDF's four: typographic quotes and
+dashes are folded to ASCII (‘ ’ → ', “ ” → ", – — − → -). NFKC leaves them alone, and on a real page
+the model quoted “tri-hybrid” as "tri-hybrid", which failed the check on typography alone. Folding
+can't make a different word or number match (tested).
 
 ---
 
@@ -513,6 +517,38 @@ Old 5/6 correct, new 6/6, with no false variant accepted. Two caveats: #1 did *n
 original false negative under the old instructions this time (here it was judged together with
 other claims from the same page, in run 1 it was not), and six claims in one run is a small sample, not an
 accuracy estimate. Record: [traces/a2-tests/verifier-instructions-before-after.json](traces/a2-tests/verifier-instructions-before-after.json).
+
+**Follow-up 3 (2026-11-15): a larger test.** [tests/verifier_eval.py](tests/verifier_eval.py) takes
+every distinct claim the orchestrator has saved with a verifier verdict (56 claims from 24 independent
+pages, fault-injection claims excluded) and, for each of the 47 that contain a number, a **false
+variant** with one digit changed (2026 → 2027, 1.7 → 1.8). All 103 go to the verifier, each URL's
+claims in one request so a variant is judged next to its original. What it measures: for the variants
+the truth is known by construction, so "accepted a false claim" is a real error rate; the originals
+were not re-checked by hand for this test, so for them it reports agreement with the earlier verdict,
+not accuracy.
+
+| Run (same 103 claims) | False variants wrongly **supported** | Originals supported / unsupported / unreachable |
+|---|---|---|
+| Render, verifier `9a30d09` | **0 of 46** judged (1 unreachable) | 51 / 4 / 1 |
+| Laptop, same code | **0 of 46** judged (1 unreachable) | 51 / 4 / 1 |
+| Laptop, with the two fixes below | **0 of 46** judged (1 unreachable) | 52 / 3 / 1 |
+
+The verifier logs which claims the code downgrades (and why), which showed the remaining errors
+were not the model's judgement: in all four "unsupported" originals the model had said *supported*
+and the code rejected its excerpt — twice for being over 300 characters, once for straight quotes
+where the page has curly ones, once for a quote stitched from separate sentences. And no false variant
+was ever rescued by the code check: the model itself rejected all 46. Two fixes followed (DECISIONS.md
+D35–D36): the typography folding above, and **one repair call** for exactly the claims whose excerpt the
+code rejected, telling the model why; its new excerpt goes through the same check. In the last run
+that turned 1 of 3 rejected excerpts into a checked *supported* (the other two stayed unsupported: the
+model again gave an excerpt over 300 characters, or answered unsupported), and the curly-quote claim
+passed directly. The other remaining "unsupported" original (o13) is a plain model error that varies
+between runs: supported in the first two runs, unsupported in the third, while its page states it.
+So on this set: no false claim accepted in 138 judgements of false variants across three runs, and in
+the last run 3 of 56 originals (5%) left unsupported, of which I checked two (o13, o42) and their pages
+do state the claim; o53 I did not check. These are
+still claims from one topic and one model; not a general accuracy figure. Records:
+[traces/a2-tests/](traces/a2-tests/) (`verifier-eval-*.json`).
 
 The same claim sent to the **Render** verifier came back `unreachable`: the site answered Render's
 data-centre address with HTTP 403, while it serves my laptop. "Unreachable" therefore depends on

@@ -99,10 +99,10 @@ class FakeJudge:
         self.prompts: list[str] = []
         self.max_outputs: list = []
 
-    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None):
+    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None, note=None):
         self.calls += 1
         self.max_outputs.append(max_output)
-        self.prompts.append(build_prompt(claims, page_text, max_chars))
+        self.prompts.append(build_prompt(claims, page_text, max_chars, note))
         if self.block is not None:
             self.block.wait(5)
         if self.delay:
@@ -409,11 +409,11 @@ class FlakyJudge(FakeJudge):
         super().__init__(supported_with("Alibaba released Qwen 4 today"))
         self.fails = fails
 
-    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None):
+    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None, note=None):
         if self.calls < self.fails:
             self.calls += 1
             raise ModelTransient("model server error (503)")
-        return super().judge(claims, page_text, max_chars=max_chars, timeout=timeout, max_output=max_output)
+        return super().judge(claims, page_text, max_chars=max_chars, timeout=timeout, max_output=max_output, note=note)
 
 
 for max_steps, fails in ((1, 2), (2, 5), (3, 1)):
@@ -444,11 +444,11 @@ class FailOnce(FakeJudge):
         super().__init__(supported_with("Alibaba released Qwen 4 today"))
         self.err = err
 
-    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None):
+    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None, note=None):
         if self.calls == 0:
             self.calls += 1
             raise self.err
-        return super().judge(claims, page_text, max_chars=max_chars, timeout=timeout, max_output=max_output)
+        return super().judge(claims, page_text, max_chars=max_chars, timeout=timeout, max_output=max_output, note=note)
 
 
 client, web, judge, _ = make(FailOnce(ModelTransient("model per-minute rate limit (429)", 0.0, maybe_billed=False)))
@@ -510,6 +510,49 @@ client = TestClient(build_app(deps, token=TOKEN, trace=TraceLog("verifier", None
 r = client.post("/verify", json=envelope([{**claim[0], "source_url": "http://news.example.org/long"}]), headers=AUTH)
 check("an excerpt stitched across a '[…]' gap is not on the page -> unsupported",
       r.json()["result"]["verdicts"][0]["verdict"] == "unsupported", r.text[:300])
+
+print("\nexcerpt typography and one repair call (2026-11-15)")
+curly_page = "Built on a “tri-hybrid” design that weaves short convolutions — and global attention."
+check("straight quotes in the excerpt match curly quotes on the page (step 5 folding)",
+      check_evidence('Built on a "tri-hybrid" design that weaves short convolutions - and global', curly_page)[0])
+check("folding never turns a different word into a match",
+      not check_evidence('Built on a "quad-hybrid" design that weaves short convolutions', curly_page)[0])
+
+
+class RepairJudge(FakeJudge):
+    """First answer: supported with an excerpt the code rejects; on the repair call: `second`."""
+    def __init__(self, first, second):
+        super().__init__()
+        self.first, self.second, self.notes = first, second, []
+
+    def judge(self, claims, page_text, *, max_chars, timeout, max_output=None, note=None):
+        self.notes.append(note)
+        ex = self.first if not self.notes[:-1] else self.second
+        self.answer = supported_with(ex) if ex else (lambda cl, t: [{"claim_id": c["claim_id"],
+                                                                     "verdict": "unsupported", "evidence": None}
+                                                                    for c in cl])
+        return super().judge(claims, page_text, max_chars=max_chars, timeout=timeout, max_output=max_output, note=note)
+
+
+too_long = "Alibaba released Qwen 4 today under the Apache 2.0 license. " * 6
+client, web, judge, _ = make(RepairJudge(too_long, "Alibaba released Qwen 4 today under the Apache 2.0 license."))
+r = client.post("/verify", json=envelope([QWEN_CLAIM]), headers=AUTH)
+out = r.json()
+check("excerpt over 300 chars -> one repair call with the reason -> shorter exact excerpt -> supported",
+      out["result"]["verdicts"][0]["verdict"] == "supported" and judge.calls == 2 and out["usage"]["steps"] == 2
+      and judge.notes[0] is None and judge.notes[1] and "300 characters" in judge.notes[1], r.text[:300])
+client, web, judge, _ = make(RepairJudge(too_long, "Alibaba released Qwen 5 under the MIT license, it says."))
+r = client.post("/verify", json=envelope([QWEN_CLAIM]), headers=AUTH)
+check("repair answer still not on the page -> stays unsupported (code check applies to the repair too)",
+      r.json()["result"]["verdicts"][0]["verdict"] == "unsupported" and judge.calls == 2, r.text[:300])
+client, web, judge, _ = make(RepairJudge(None, None))
+r = client.post("/verify", json=envelope([QWEN_CLAIM]), headers=AUTH)
+check("model says unsupported -> no repair call (only rejected excerpts are retried)", judge.calls == 1)
+client, web, judge, _ = make(RepairJudge(too_long, "Alibaba released Qwen 4 today under the Apache 2.0 license."))
+r = client.post("/verify", json=envelope([QWEN_CLAIM], budget={"max_steps": 1, "max_fetches": 5, "max_tokens": 40000}),
+                headers=AUTH)
+check("no step left for the repair -> unsupported, within the step budget",
+      r.json()["result"]["verdicts"][0]["verdict"] == "unsupported" and r.json()["usage"]["steps"] == 1, r.text[:300])
 
 print("\nrequests outside /verify and /healthz are logged too (review P2 #2)")
 client, web, judge, tpath = make()

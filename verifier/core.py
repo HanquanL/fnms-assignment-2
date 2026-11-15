@@ -22,7 +22,7 @@ from typing import Callable
 from shared.workerkit import Cooldown, Job, Reply, response_body
 from verifier.evidence import check_evidence
 from verifier.fetchguard import DeadlineReached, FetchPolicy, HopRefused, fetch_article
-from verifier.judge import ModelTerminal, ModelTransient, input_token_bound
+from verifier.judge import REPAIR_NOTE, ModelTerminal, ModelTransient, input_token_bound
 
 MIN_SECONDS_TO_START = 2.0      # don't start a fetch or model call with less time than this left
 MIN_OUTPUT_TOKENS = 256         # don't start a call that could only write fewer tokens than this
@@ -68,8 +68,9 @@ def run_verify(job: Job, deps: Deps) -> Reply:
         usage["fetches"] += 1
         return True
 
-    def call_model(group: list, text: str):
+    def call_model(group: list, text: str, note: str | None = None):
         payload = [{"claim_id": c.claim_id, "text": c.text} for c in group]
+        extra = {"note": note} if note else {}
         for attempt in range(1, deps.model_attempts + 1):
             left = job.remaining_s()
             if left < MIN_SECONDS_TO_START:
@@ -78,7 +79,7 @@ def run_verify(job: Job, deps: Deps) -> Reply:
                 raise _Stop("budget_exhausted", f"step budget used up ({budget.max_steps} model calls)")
             # reserve BEFORE the request: one step, and input upper bound + output cap tokens, where
             # the cap shrinks so the reservation never exceeds the token budget that is left
-            bound = input_token_bound(payload, text, deps.max_chars_to_model)
+            bound = input_token_bound(payload, text, deps.max_chars_to_model, note)
             out_cap = min(deps.max_output_tokens, budget.max_tokens - usage["tokens"] - bound)
             if out_cap < MIN_OUTPUT_TOKENS:
                 raise _Stop("budget_exhausted", f"token budget would be exceeded ({usage['tokens']:,} of "
@@ -90,7 +91,8 @@ def run_verify(job: Job, deps: Deps) -> Reply:
             t0 = time.monotonic()
             try:
                 out = deps.judge.judge(payload, text, max_chars=deps.max_chars_to_model,
-                                       timeout=max(1.0, min(deps.model_timeout, left - 1.0)), max_output=out_cap)
+                                       timeout=max(1.0, min(deps.model_timeout, left - 1.0)), max_output=out_cap,
+                                       **extra)
             except (ModelTransient, ModelTerminal) as e:
                 if not e.maybe_billed:          # refused before processing: no tokens used
                     usage["tokens"] -= reserved  # otherwise usage is unknown: the reservation stays charged
@@ -125,6 +127,31 @@ def run_verify(job: Job, deps: Deps) -> Reply:
             # unparseable answer: one more try if the loop allows it
         return None
 
+    def apply_verdicts(group: list, raw: list, page_text: str, repair: bool = False) -> list[tuple[str, str]]:
+        """Turn the model's proposals into verdicts. "supported" only if the code finds the excerpt
+        on the page; otherwise "unsupported". Returns the claims the code downgraded, with why."""
+        proposed: dict[str, dict] = {}
+        for item in raw:
+            if isinstance(item, dict) and isinstance(item.get("claim_id"), str):
+                proposed.setdefault(item["claim_id"], item)   # first answer per id; unknown ids ignored
+        downgraded: list[tuple[str, str]] = []   # (claim_id, why) -- which claims, not just how many
+        for c in group:
+            item = proposed.get(c.claim_id) or {}
+            if item.get("verdict") == "supported":
+                ok, why = check_evidence(item.get("evidence"), page_text)
+                if ok:
+                    verdicts[c.claim_id] = {"claim_id": c.claim_id, "verdict": "supported",
+                                            "evidence": item["evidence"]}
+                    continue
+                downgraded.append((c.claim_id, why))
+            verdicts[c.claim_id] = {"claim_id": c.claim_id, "verdict": "unsupported", "evidence": None}
+        if downgraded:
+            job.trace.log(**ids, step=usage["steps"], direction="out", endpoint_or_tool="evidence_check",
+                          status="downgraded_after_repair" if repair else "downgraded", latency_ms=0, attempt=1,
+                          tokens=0, claims=len(downgraded), claim_ids=[cid for cid, _ in downgraded],
+                          reasons=[why for _, why in downgraded])
+        return downgraded
+
     try:
         for url, group in groups.items():
             if job.remaining_s() < MIN_SECONDS_TO_START:
@@ -155,24 +182,23 @@ def run_verify(job: Job, deps: Deps) -> Reply:
             if raw is None:
                 soft_errors.append(f"model output for {len(group)} claim(s) could not be parsed")
                 continue
-            proposed: dict[str, dict] = {}
-            for item in raw:
-                if isinstance(item, dict) and isinstance(item.get("claim_id"), str):
-                    proposed.setdefault(item["claim_id"], item)   # first answer per id; unknown ids ignored
-            downgraded = 0
-            for c in group:
-                item = proposed.get(c.claim_id) or {}
-                if item.get("verdict") == "supported":
-                    ok, _why = check_evidence(item.get("evidence"), fr.text)
-                    if ok:
-                        verdicts[c.claim_id] = {"claim_id": c.claim_id, "verdict": "supported",
-                                                "evidence": item["evidence"]}
-                        continue
-                    downgraded += 1
-                verdicts[c.claim_id] = {"claim_id": c.claim_id, "verdict": "unsupported", "evidence": None}
-            if downgraded:
-                job.trace.log(**ids, step=usage["steps"], direction="out", endpoint_or_tool="evidence_check",
-                              status="downgraded", latency_ms=0, attempt=1, tokens=0, claims=downgraded)
+            downgraded = apply_verdicts(group, raw, fr.text)
+            if downgraded and usage["steps"] < budget.max_steps:
+                # ONE repair call, only for the claims whose excerpt the code rejected (too long, or not
+                # copied exactly): the model gets the reason and may give a shorter exact excerpt or say
+                # unsupported. Its answer goes through the same check; nothing is upgraded without it.
+                retry_group = [c for c in group if c.claim_id in {cid for cid, _ in downgraded}]
+                try:
+                    raw2 = call_model(retry_group, fr.text, REPAIR_NOTE)
+                except _Stop:
+                    raw2 = None                  # no budget/time for the repair: verdicts stay unsupported
+                if raw2 is not None:
+                    apply_verdicts(retry_group, raw2, fr.text, repair=True)
+                    retried = [c.claim_id for c in retry_group]
+                    job.trace.log(**ids, step=usage["steps"], direction="out", endpoint_or_tool="evidence_repair",
+                                  status="done", latency_ms=0, attempt=1, tokens=0,
+                                  now_supported=[cid for cid in retried if verdicts[cid]["verdict"] == "supported"],
+                                  still_unsupported=[cid for cid in retried if verdicts[cid]["verdict"] != "supported"])
     except _Stop as e:
         stop = e
     except ModelTerminal as e:

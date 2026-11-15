@@ -205,6 +205,24 @@ Five improvements, each with offline tests; none needed a paid call.
   (D25), so the old values in the git history no longer work; the current ones exist only in
   git-ignored local files and in Render's settings.
 
+## 2026-11-15: final end-to-end run, larger verifier test
+
+- **Final end-to-end run** with the latest code (backend and researcher on my laptop, verifier on
+  Render `9a30d09`): run `7a161759-11d1-40fe-95b6-5bd5c0d39132`, complete, 4 developments, 4 claims all
+  supported with excerpts, saved to Neon, returned by `/runs/latest` and first in run history. The
+  verifier's 47 s include one Gemini 429 and its `Retry-After` wait. All three logs in
+  [traces/a2-final-run/](traces/a2-final-run/); the orchestrator log now also shows the request-logging
+  lines (login, progress polls).
+- **D35: typography folding** as a fifth normalization step, both strings (`verifier/evidence.py`):
+  curly quotes and dashes → ASCII. Stated in ORCHESTRATION.md Q4.
+- **D36: one repair call for rejected excerpts** (`verifier/core.py`): when the code rejects a
+  "supported" excerpt (too long / not on the page), the model is asked once more, for those claims only,
+  with the reason; the answer goes through the same check and costs a step. Never an upgrade without a
+  checked excerpt. The evidence-check log line now records which claim ids were downgraded and why.
+- **D37: larger verifier test** (`tests/verifier_eval.py`): 56 saved claims + 47 one-digit false
+  variants, three runs; no false variant accepted in any run (0/138 judged); in the last run 52/56
+  originals supported. Details and caveats in ORCHESTRATION.md Q5, follow-up 3.
+
 ## 2026-11-07: review round 3
 
 I reproduced both problems first: with the previous code, a worker sending its answer one byte every

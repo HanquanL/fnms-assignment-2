@@ -141,11 +141,19 @@ def select_passages(page_text: str, claims: list[dict], max_chars: int) -> str:
     return "".join(out)[:max_chars]
 
 
-def build_prompt(claims: list[dict], page_text: str, max_chars: int) -> str:
+REPAIR_NOTE = ("Your previous excerpt for these claims could not be used: it was longer than 300 characters, or "
+               "it was not copied exactly from the source. If a claim is supported, give ONE excerpt of at most 300 "
+               "characters copied character for character from the source text, keeping its punctuation and "
+               "quotation marks, without '...' and without joining separate sentences. If no single excerpt of at "
+               "most 300 characters states the claim, answer unsupported.")
+
+
+def build_prompt(claims: list[dict], page_text: str, max_chars: int, note: str | None = None) -> str:
     claims_json = json.dumps([{"claim_id": c["claim_id"], "text": c["text"]} for c in claims], ensure_ascii=False)
     return (f"<claims>\n{_fence(claims_json, 'claims')}\n</claims>\n\n"
             f"<source>\n{_fence(select_passages(page_text, claims, max_chars), 'source')}\n</source>\n\n"
-            "Return the verdicts as JSON.")
+            + (f"{note}\n\n" if note else "")
+            + "Return the verdicts as JSON.")
 
 
 def _retry_delay(details: list) -> float | None:
@@ -187,14 +195,14 @@ class GeminiJudge:
         self._transport = transport
 
     def judge(self, claims: list[dict], page_text: str, *, max_chars: int, timeout: float,
-              max_output: int | None = None) -> Judgement:
+              max_output: int | None = None, note: str | None = None) -> Judgement:
         """ONE attempt. Raises ModelTransient / ModelTerminal. max_output caps this call's output
         (so it can't exceed the token budget that is left)."""
         if not self._key:
             raise ModelTerminal("GEMINI_API_KEY is not set on the verifier")
         body = {
             "systemInstruction": {"parts": [{"text": SYSTEM}]},
-            "contents": [{"role": "user", "parts": [{"text": build_prompt(claims, page_text, max_chars)}]}],
+            "contents": [{"role": "user", "parts": [{"text": build_prompt(claims, page_text, max_chars, note)}]}],
             "generationConfig": {"temperature": 0, "maxOutputTokens": min(self._max_out, max_output or self._max_out),
                                  "responseMimeType": "application/json", "responseSchema": RESPONSE_SCHEMA},
         }
@@ -227,9 +235,9 @@ class GeminiJudge:
             return Judgement([], False, tokens)
 
 
-def input_token_bound(claims: list[dict], page_text: str, max_chars: int) -> int:
+def input_token_bound(claims: list[dict], page_text: str, max_chars: int, note: str | None = None) -> int:
     """Upper bound on the input tokens of one judge call: the UTF-8 BYTES of the system instruction
     and the prompt, plus a small overhead. A byte-fallback tokenizer (SentencePiece, which Gemini
     uses) never emits more tokens than bytes -- an assumption about the provider, not a documented
     guarantee. Conservative: ~3-4x the real count for English."""
-    return len(SYSTEM.encode("utf-8")) + len(build_prompt(claims, page_text, max_chars).encode("utf-8")) + 64
+    return len(SYSTEM.encode("utf-8")) + len(build_prompt(claims, page_text, max_chars, note).encode("utf-8")) + 64

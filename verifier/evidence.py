@@ -7,7 +7,11 @@ normalize() is exactly the PDF's four steps, in order:
     4. lowercase                     str.lower()
 Applied identically to the excerpt and to the fetched page text.
 
-Two additions, stated in ORCHESTRATION.md:
+Additions, stated in ORCHESTRATION.md:
+  - step 5, applied to both strings like the PDF's four: typographic quotes and dashes are folded
+    to their ASCII forms (‘ ’ ‚ ‛ → ', “ ” „ ‟ → ", ‐ ‑ ‒ – — − → -). NFKC leaves these alone, and a
+    model copying “tri-hybrid” often writes "tri-hybrid": that difference is typography, not content
+    (seen on a real page, 2026-11-15). It can't turn a different word or number into a match;
   - the EXCERPT (not the page) has leading/trailing whitespace stripped after normalizing, so a
     trailing newline the model added can't fail an otherwise exact quote;
   - an excerpt must be at least MIN_EVIDENCE_CHARS long after normalizing. A two-word "excerpt"
@@ -20,13 +24,16 @@ import unicodedata
 MAX_EVIDENCE_CHARS = 300
 MIN_EVIDENCE_CHARS = 20
 _WS = re.compile(r"\s+")
+_TYPOGRAPHY = str.maketrans({"‘": "'", "’": "'", "‚": "'", "‛": "'", "“": '"', "”": '"', "„": '"', "‟": '"',
+                             "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"})
 
 
 def normalize(text: str) -> str:
     text = html.unescape(text)
     text = unicodedata.normalize("NFKC", text)
     text = _WS.sub(" ", text)
-    return text.lower()
+    text = text.lower()
+    return text.translate(_TYPOGRAPHY)     # step 5 (an addition to the PDF's four)
 
 
 def check_evidence(excerpt: object, page_text: str) -> tuple[bool, str]:
