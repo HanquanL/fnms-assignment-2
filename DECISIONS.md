@@ -220,8 +220,12 @@ Five improvements, each with offline tests; none needed a paid call.
   with the reason; the answer goes through the same check and costs a step. Never an upgrade without a
   checked excerpt. The evidence-check log line now records which claim ids were downgraded and why.
 - **D37: larger verifier test** (`tests/verifier_eval.py`): 56 saved claims + 47 one-digit false
-  variants, three runs; no false variant accepted in any run (0/138 judged); in the last run 52/56
-  originals supported. Details and caveats in ORCHESTRATION.md Q5, follow-up 3.
+  variants, four runs; no false variant accepted in any run (0/184 judged). With the fixes deployed on
+  Render, 53/56 originals supported, 2 unsupported, 1 unreachable. Details and caveats in
+  ORCHESTRATION.md Q5, follow-up 3.
+- **Render redeployed with `2d6c0a3`** (manual deploy, 2026-11-15 UTC): test table 16/16
+  ([traces/a2-render/matrix-verifier-final.json](traces/a2-render/matrix-verifier-final.json)); larger
+  test on Render as above ([traces/a2-tests/verifier-eval-20261115-020529.json](traces/a2-tests/verifier-eval-20261115-020529.json)).
 
 ## 2026-11-07: review round 3
 

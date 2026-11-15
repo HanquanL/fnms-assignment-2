@@ -532,6 +532,7 @@ not accuracy.
 | Render, verifier `9a30d09` | **0 of 46** judged (1 unreachable) | 51 / 4 / 1 |
 | Laptop, same code | **0 of 46** judged (1 unreachable) | 51 / 4 / 1 |
 | Laptop, with the two fixes below | **0 of 46** judged (1 unreachable) | 52 / 3 / 1 |
+| **Render, with the two fixes (`2d6c0a3`, deployed)** | **0 of 46** judged (1 unreachable) | **53 / 2 / 1** |
 
 The verifier logs which claims the code downgrades (and why), which showed the remaining errors
 were not the model's judgement: in all four "unsupported" originals the model had said *supported*
@@ -539,14 +540,15 @@ and the code rejected its excerpt — twice for being over 300 characters, once 
 where the page has curly ones, once for a quote stitched from separate sentences. And no false variant
 was ever rescued by the code check: the model itself rejected all 46. Two fixes followed (DECISIONS.md
 D35–D36): the typography folding above, and **one repair call** for exactly the claims whose excerpt the
-code rejected, telling the model why; its new excerpt goes through the same check. In the last run
-that turned 1 of 3 rejected excerpts into a checked *supported* (the other two stayed unsupported: the
-model again gave an excerpt over 300 characters, or answered unsupported), and the curly-quote claim
-passed directly. The other remaining "unsupported" original (o13) is a plain model error that varies
-between runs: supported in the first two runs, unsupported in the third, while its page states it.
-So on this set: no false claim accepted in 138 judgements of false variants across three runs, and in
-the last run 3 of 56 originals (5%) left unsupported, of which I checked two (o13, o42) and their pages
-do state the claim; o53 I did not check. These are
+code rejected, telling the model why; its new excerpt goes through the same check. On the laptop that
+turned 1 of 3 rejected excerpts into a checked *supported*; on Render (deployed code) 1 of 2 (o35). The
+one that keeps failing (o53) is a claim the model wants to support with a passage over 300 characters
+both times, so it stays unsupported by rule; o42 passed on Render without needing a repair. The
+curly-quote claim passed directly in both runs. The remaining "unsupported" original o13 is a plain
+model error that varies between runs: supported in the first two runs, unsupported in the last two,
+while its page states it. So on this set: no false claim accepted in 184 judgements of false variants
+across four runs, and with the deployed code 2 of 56 originals (4%) left unsupported — o13, whose page
+I checked and which does state the claim, and o53, which I did not check. These are
 still claims from one topic and one model; not a general accuracy figure. Records:
 [traces/a2-tests/](traces/a2-tests/) (`verifier-eval-*.json`).
 
