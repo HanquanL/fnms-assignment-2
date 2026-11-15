@@ -1,0 +1,115 @@
+{
+ "note": "Same 6 claims (3 true per the hand-check, 3 deliberately false variants), same pages, real model (config.yaml verifier.model), full verifier code incl. the evidence check. 'before' = instructions at commit HEAD, 'after' = new instructions.",
+ "results": {
+  "before": {
+   "http_status": 200,
+   "status": "complete",
+   "usage": {
+    "steps": 2,
+    "fetches": 3,
+    "tokens": 6297,
+    "searches": 0
+   },
+   "error": null,
+   "claims": [
+    {
+     "claim_id": "c1-true",
+     "true_per_handcheck_or_construction": true,
+     "verdict": "supported",
+     "correct": true,
+     "evidence": "Kimi K3.1 Pro is Moonshot AI's trillion-parameter sparse flagship, whose API opened on 23 October and whose weights — about 1.56 TB of them — became public on 4 November."
+    },
+    {
+     "claim_id": "c1-false-date",
+     "true_per_handcheck_or_construction": false,
+     "verdict": "unsupported",
+     "correct": true,
+     "evidence": null
+    },
+    {
+     "claim_id": "c2-true",
+     "true_per_handcheck_or_construction": true,
+     "verdict": "unsupported",
+     "correct": false,
+     "evidence": null
+    },
+    {
+     "claim_id": "c2-false-extra",
+     "true_per_handcheck_or_construction": false,
+     "verdict": "unsupported",
+     "correct": true,
+     "evidence": null
+    },
+    {
+     "claim_id": "c9-true",
+     "true_per_handcheck_or_construction": true,
+     "verdict": "supported",
+     "correct": true,
+     "evidence": "The startup released its LFM3 lineup on Oct. 27, rolling out six open-weight models anchored by a 1.7-billion-parameter base."
+    },
+    {
+     "claim_id": "c9-false-count",
+     "true_per_handcheck_or_construction": false,
+     "verdict": "unsupported",
+     "correct": true,
+     "evidence": null
+    }
+   ]
+  },
+  "after": {
+   "http_status": 200,
+   "status": "complete",
+   "usage": {
+    "steps": 2,
+    "fetches": 3,
+    "tokens": 6480,
+    "searches": 0
+   },
+   "error": null,
+   "claims": [
+    {
+     "claim_id": "c1-true",
+     "true_per_handcheck_or_construction": true,
+     "verdict": "supported",
+     "correct": true,
+     "evidence": "Kimi K3.1 Pro is Moonshot AI's trillion-parameter sparse flagship, whose API opened on 23 October and whose weights — about 1.56 TB of them — became public on 4 November."
+    },
+    {
+     "claim_id": "c1-false-date",
+     "true_per_handcheck_or_construction": false,
+     "verdict": "unsupported",
+     "correct": true,
+     "evidence": null
+    },
+    {
+     "claim_id": "c2-true",
+     "true_per_handcheck_or_construction": true,
+     "verdict": "supported",
+     "correct": true,
+     "evidence": "Built on a “tri-hybrid” design that weaves short convolutions, sliding-window attention, and global attention, the suite packs text, vision, audio, omni, and decision capabilities into roughly 2-billion-parameter footprints."
+    },
+    {
+     "claim_id": "c2-false-extra",
+     "true_per_handcheck_or_construction": false,
+     "verdict": "unsupported",
+     "correct": true,
+     "evidence": null
+    },
+    {
+     "claim_id": "c9-true",
+     "true_per_handcheck_or_construction": true,
+     "verdict": "supported",
+     "correct": true,
+     "evidence": "The startup released its LFM3 lineup on Oct. 27, rolling out six open-weight models anchored by a 1.7-billion-parameter base."
+    },
+    {
+     "claim_id": "c9-false-count",
+     "true_per_handcheck_or_construction": false,
+     "verdict": "unsupported",
+     "correct": true,
+     "evidence": null
+    }
+   ]
+  }
+ }
+}

@@ -13,19 +13,40 @@ Rules this module enforces:
 Each process owns its own TraceLog (no state shared between services).
 """
 import json
+import re
 import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 REQUIRED = ("ts", "service", "run_id", "request_id", "step", "direction", "endpoint_or_tool", "status",
             "latency_ms", "attempt", "tokens")
 _SECRET_WORDS = ("authorization", "api_key", "apikey", "password", "secret", "bearer", "credential")
 
 
+_URL = re.compile(r"[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s\"'<>]+")
+
+
+def redact_url(url: str) -> str:
+    """A URL as it may appear in a trace: query VALUES replaced by REDACTED (names kept, so the log
+    still shows the shape of the request), user:password@ removed, #fragment dropped. A token passed
+    as ?token=... or ?key=... in a cited URL therefore never reaches the log."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "[unparseable URL]"
+    netloc = parts.netloc.rsplit("@", 1)[-1]
+    query = "&".join(f"{k}=REDACTED" if v != "" or "=" in pair else k
+                     for pair in parts.query.split("&") if pair
+                     for k, _, v in [pair.partition("=")])
+    return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+
+
 def _short(value: Any, limit: int = 300) -> Any:
     if isinstance(value, str):
+        value = _URL.sub(lambda m: redact_url(m.group(0)), value)   # any URL anywhere in any string
         return value if len(value) <= limit else value[:limit] + f"... [{len(value)} chars]"
     if isinstance(value, dict):
         return {k: _short(v, limit) for k, v in value.items() if not _secretish(k)}

@@ -179,6 +179,26 @@ Five improvements, each with offline tests; none needed a paid call.
   address). Same claim through the new code on my laptop with the real model: `supported`, with the
   correct, code-checked excerpt. All in [traces/a2-render/after-review2-checks.json](traces/a2-render/after-review2-checks.json).
 
+## 2026-11-14: verifier strictness, URL redaction in traces
+
+- **D33: verifier instructions allow a less detailed claim.** The hand-check found 3 of 3
+  "unsupported" verdicts wrong; one was the 15,000-character window (D30), the other two were
+  over-strict instructions ("by itself states the claim", "only partly states it"). New rule in
+  `verifier/judge.py`: a claim may leave out details its source gives and may rely on context the page
+  establishes elsewhere (e.g. the year in the article's date), but anything it asserts beyond the source
+  (different number/date/name/version, extra detail, stronger statement) is unsupported. The code's
+  evidence check is unchanged, so this can't let an invented quote through. Live before/after on 6 real
+  claims (3 true, 3 deliberately false variants): old 5/6, new 6/6, no false claim accepted
+  ([traces/a2-tests/verifier-instructions-before-after.json](traces/a2-tests/verifier-instructions-before-after.json)).
+  Small sample; earlier runs are kept as measured.
+- **D34: URLs in traces are redacted.** `shared/tracelog.py` now rewrites every URL in every string it
+  logs, in all three services: query values become `REDACTED` (names kept), `user:password@` is
+  removed, the `#fragment` dropped. Before, a cited URL carrying `?token=...` would have been written to
+  the verifier's `url` field as-is. Tests in `tests/contract_check.py` (the `url` field and free text).
+- **Credentials, re-checked.** The JWT secret was rotated and the Neon password changed on 2026-11-07
+  (D25), so the old values in the git history no longer work; the current ones exist only in
+  git-ignored local files and in Render's settings.
+
 ## 2026-11-07: review round 3
 
 I reproduced both problems first: with the previous code, a worker sending its answer one byte every

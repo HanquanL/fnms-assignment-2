@@ -26,11 +26,15 @@ You receive:
   facts it states about the world matter.
 
 For every claim, answer:
-- "supported" only if the source text itself clearly states what the claim says. Then "evidence"
-  is ONE excerpt copied character for character from the source text (no paraphrase, no "...",
-  no added words), at most 300 characters, that by itself states the claim.
-- "unsupported" if the source does not state it, states something different, or only partly
-  states it (e.g. a different number, date, name, or version). Then "evidence" is null.
+- "supported" if the source states everything the claim asserts. A claim may be LESS detailed than
+  the source: leaving out items, numbers or qualifiers that the source gives does not make it
+  unsupported. Facts the page itself establishes elsewhere count as stated, e.g. the year in the
+  article's date when a sentence gives only the day and month. Then "evidence" is ONE excerpt copied
+  character for character from the source text (no paraphrase, no "...", no added words), at most
+  300 characters: the sentence that most directly states the claim.
+- "unsupported" if the claim asserts anything the source does not state: a different number, date,
+  name or version, an extra detail, or something stronger or more specific than the source says.
+  Then "evidence" is null.
 
 Return one verdict per claim_id you were given, and no other claim_ids."""
 

@@ -56,5 +56,25 @@ check("complete with error refused", invalid(WorkerResponse, {**base, "status": 
                                                               "error": {"code": "x", "message": "m", "retryable": False}}))
 check("failed with a result refused", invalid(WorkerResponse, {**base, "status": "failed",
                                                                "error": {"code": "x", "message": "m", "retryable": False}}))
+print("\ntrace log: URLs are redacted before they are written")
+import json as _json  # noqa: E402
+import tempfile  # noqa: E402
+
+from shared.tracelog import TraceLog, redact_url  # noqa: E402
+
+check("query values replaced, names kept", redact_url("https://x.org/p?token=abc123&page=2") ==
+      "https://x.org/p?token=REDACTED&page=REDACTED", redact_url("https://x.org/p?token=abc123&page=2"))
+check("user:password@ removed", redact_url("https://bob:hunter2@x.org/a") == "https://x.org/a")
+check("fragment dropped, path kept", redact_url("https://x.org/a/b#access_token=zzz") == "https://x.org/a/b")
+check("URL without query unchanged", redact_url("https://example.com/news/qwen-4") == "https://example.com/news/qwen-4")
+path = tempfile.mktemp(suffix=".jsonl")
+TraceLog("verifier", path).log(run_id=None, request_id=None, step=1, direction="out", endpoint_or_tool="fetch_article",
+                               status="failed", url="https://cdn.example/f?sig=SECRET-SIG-1&key=SECRET-KEY-2",
+                               detail="redirect to https://u:SECRET-PW-3@evil.example/x?t=SECRET-T-4 refused")
+raw = open(path, encoding="utf-8").read()
+check("no query value, password or signature from a URL reaches the trace file (url field AND free text)",
+      not any(s in raw for s in ("SECRET-SIG-1", "SECRET-KEY-2", "SECRET-PW-3", "SECRET-T-4"))
+      and _json.loads(raw)["url"] == "https://cdn.example/f?sig=REDACTED&key=REDACTED", raw)
+
 print(f"\n{passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)

@@ -475,7 +475,7 @@ claims reaching the verifier were pre-filtered. What the second agent bought:
   a researcher fooled by an injected page — in principle. These runs did not contain such a page, so
   that benefit is untested on live data (it is tested with fixtures).
 
-Its measured weaknesses are concrete and fixable: a 15,000-character prompt window and over-strictness
+Its measured weaknesses were concrete and fixable (both addressed later, see the follow-ups below): a 15,000-character prompt window and over-strictness
 about details the claim doesn't need (#1, #2). With 3 of 3 unsupported verdicts wrong, an
 "unsupported" label from this verifier should currently be read as "not confirmed", not "false".
 For a five-item daily digest, the cost is small enough that I would keep it — but these numbers are
@@ -489,7 +489,30 @@ outside the old window and is inside the new selection. Re-run live with the new
 model (laptop, one call): claim #3 is now **supported**, with the code-checked excerpt "Liquid AI
 announced LFM3-1.7B on October 27, 2026, as an open-weight model aimed at local agents, tool calling
 and structured outputs." The verdict numbers above were measured with the old behaviour and are kept as
-measured; the over-strictness of #1 and #2 is not addressed.
+measured.
+
+**Follow-up 2 (2026-11-14; DECISIONS.md D33): over-strictness.** The old instructions told the model
+to say "supported" only for an excerpt that "by itself states the claim", and "unsupported" when the
+source "only partly states it". That is what rejected #2 (the claim leaves out "omni") and plausibly
+#1 (the year is in the article's date, not in the sentence). The new instructions say a claim may be
+*less* detailed than its source and may rely on context the page establishes elsewhere, but must not
+assert anything the source doesn't (a different number, date, name or version, an extra detail, or
+something stronger). The code's evidence check is unchanged. Before/after, same real pages, real model,
+full verifier code, one run each:
+
+| Claim | Truth | Old instructions | New instructions |
+|---|---|---|---|
+| #1 Kimi weights on Nov 4, 2026 | true | supported | supported |
+| #1 with "November 5" | false | unsupported | unsupported |
+| #2 tri-hybrid … text, vision, audio, decision | true | **unsupported** | supported |
+| #2 with "video-generation" instead of "decision" | false | unsupported | unsupported |
+| #9 six open-weight models, 1.7B base | true | supported | supported |
+| #9 with "eight" models | false | unsupported | unsupported |
+
+Old 5/6 correct, new 6/6, with no false variant accepted. Two caveats: #1 did *not* reproduce its
+original false negative under the old instructions this time (here it was judged together with
+other claims from the same page, in run 1 it was not), and six claims in one run is a small sample, not an
+accuracy estimate. Record: [traces/a2-tests/verifier-instructions-before-after.json](traces/a2-tests/verifier-instructions-before-after.json).
 
 The same claim sent to the **Render** verifier came back `unreachable`: the site answered Render's
 data-centre address with HTTP 403, while it serves my laptop. "Unreachable" therefore depends on
